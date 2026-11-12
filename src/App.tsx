@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import {
   CustomPart,
   FurnitureModule,
@@ -23,17 +23,23 @@ import {
 } from './utils/storage';
 import { CameraViewPreset, Viewport3D } from './components/Viewport3D';
 import { ConstructorHUD } from './components/ConstructorHUD';
-import { RaskroyView } from './components/RaskroyView';
-import { MaterialsBOMView } from './components/MaterialsBOMView';
-import { ProjectsModal } from './components/ProjectsModal';
 import { OfflineIndicator, PWAInstallButton } from './components/PWAInstallButton';
+import { MobileBottomNav, WorkspaceTab } from './components/MobileBottomNav';
 
-type ActiveWorkspaceTab = '3d' | 'raskroy' | 'materials';
+const RaskroyView = lazy(() =>
+  import('./components/RaskroyView').then((m) => ({ default: m.RaskroyView })),
+);
+const MaterialsBOMView = lazy(() =>
+  import('./components/MaterialsBOMView').then((m) => ({ default: m.MaterialsBOMView })),
+);
+const ProjectsView = lazy(() =>
+  import('./components/ProjectsView').then((m) => ({ default: m.ProjectsView })),
+);
 
 export default function App() {
   const [projects, setProjects] = useState<FurnitureProject[]>(() => loadSavedProjects());
   const [activeProjectId, setActiveProjectId] = useState<string>(() =>
-    loadActiveProjectId(loadSavedProjects()),
+    loadActiveProjectId(projects),
   );
 
   const activeProject = useMemo(
@@ -41,8 +47,10 @@ export default function App() {
     [projects, activeProjectId],
   );
 
-  const [activeTab, setActiveTab] = useState<ActiveWorkspaceTab>('3d');
-  const [selectedModuleId, setSelectedModuleId] = useState<string | null>('mod_base_400');
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('3d');
+  const [selectedModuleId, setSelectedModuleId] = useState<string | null>(
+    () => activeProject?.modules[0]?.id || 'mod_base_400',
+  );
   const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
 
   // 3D Viewport interactive state
@@ -50,7 +58,6 @@ export default function App() {
   const [doorsOpen, setDoorsOpen] = useState<boolean>(false);
   const [cameraPreset, setCameraPreset] = useState<CameraViewPreset>('isometric');
   const [cameraTriggerCount, setCameraTriggerCount] = useState<number>(0);
-  const [showProjectsModal, setShowProjectsModal] = useState<boolean>(false);
 
   // Persist projects and activeProjectId to localStorage offline
   useEffect(() => {
@@ -114,15 +121,17 @@ export default function App() {
 
       let curXLow = 0;
       const packedLow = lowerMods.map((m) => {
+        const footprintW = m.rotationY === 90 || m.rotationY === 270 ? m.depth : m.width;
         const next = { ...m, x: curXLow };
-        curXLow += m.width;
+        curXLow += footprintW;
         return next;
       });
 
       let curXUp = 0;
       const packedUp = upperMods.map((m) => {
+        const footprintW = m.rotationY === 90 || m.rotationY === 270 ? m.depth : m.width;
         const next = { ...m, x: curXUp };
-        curXUp += m.width;
+        curXUp += footprintW;
         return next;
       });
 
@@ -142,16 +151,18 @@ export default function App() {
     const tpl = MODULE_TEMPLATES.find((t) => t.kind === kind) || MODULE_TEMPLATES[0];
     const isUpper = Boolean(tpl.isUpper);
 
-    // Compute X position at the end of existing row of same level
     const sameLevelMods = activeProject.modules.filter((m) =>
       isUpper ? m.y >= 1000 : m.y < 1000,
     );
     const nextX =
       sameLevelMods.length > 0
-        ? Math.max(...sameLevelMods.map((m) => m.x + m.width))
+        ? Math.max(
+            ...sameLevelMods.map(
+              (m) => m.x + (m.rotationY === 90 || m.rotationY === 270 ? m.depth : m.width),
+            ),
+          )
         : 0;
 
-    // Inherit existing color if modules exist
     const refMod = activeProject.modules[0];
 
     const newMod: FurnitureModule = {
@@ -164,6 +175,7 @@ export default function App() {
       x: nextX,
       y: kind === 'yuqori_vityajka' ? 1660 : isUpper ? 1420 : 0,
       z: 0,
+      rotationY: 0,
       boardThickness: 16,
       bodyMaterial: refMod?.bodyMaterial || 'ldsp_16',
       facadeMaterial: refMod?.facadeMaterial || 'lmdf_16',
@@ -177,7 +189,12 @@ export default function App() {
         kind !== 'kitob_javoni',
       countertopThickness: 38,
       countertopOverhangFront: kind === 'tv_tumba' || kind === 'oyoq_kiyim' ? 20 : 40,
-      legHeight: isUpper || kind === 'yozuv_stoli' ? 0 : kind === 'tv_tumba' || kind === 'shkaf_kupe' ? 60 : 100,
+      legHeight:
+        isUpper || kind === 'yozuv_stoli'
+          ? 0
+          : kind === 'tv_tumba' || kind === 'shkaf_kupe'
+          ? 60
+          : 100,
       doorCount:
         kind === 'pastki_tortmali' ||
         kind === 'pastki_duxovka' ||
@@ -205,6 +222,7 @@ export default function App() {
           : 1,
       hasBackPanel: kind !== 'yozuv_stoli' && kind !== 'pastki_moyka',
       centerDivider: kind === 'tv_tumba' || kind === 'shkaf_kupe',
+      dividerCount: kind === 'tv_tumba' || kind === 'shkaf_kupe' ? 1 : 0,
       hasClothesRod: kind === 'shkaf_kupe',
     };
 
@@ -224,7 +242,13 @@ export default function App() {
       isUpper ? m.y >= 1000 : m.y < 1000,
     );
     const nextX =
-      sameLevel.length > 0 ? Math.max(...sameLevel.map((m) => m.x + m.width)) : 0;
+      sameLevel.length > 0
+        ? Math.max(
+            ...sameLevel.map(
+              (m) => m.x + (m.rotationY === 90 || m.rotationY === 270 ? m.depth : m.width),
+            ),
+          )
+        : 0;
 
     const copy: FurnitureModule = {
       ...src,
@@ -269,10 +293,32 @@ export default function App() {
     });
   };
 
+  const handleResetOverride = (boardId: string) => {
+    updateActiveProject((prev) => {
+      const nextOverrides = { ...prev.partOverrides };
+      delete nextOverrides[boardId];
+      return {
+        ...prev,
+        partOverrides: nextOverrides,
+      };
+    });
+  };
+
   const handleAddCustomPart = (part: CustomPart) => {
     updateActiveProject((prev) => ({
       ...prev,
       customParts: [...prev.customParts, part],
+    }));
+    setSelectedBoardId(`custom:${part.id}`);
+    setSelectedModuleId(`custom:${part.id}`);
+  };
+
+  const handleUpdateCustomPart = (customPartId: string, patch: Partial<CustomPart>) => {
+    updateActiveProject((prev) => ({
+      ...prev,
+      customParts: prev.customParts.map((cp) =>
+        cp.id === customPartId ? { ...cp, ...patch } : cp,
+      ),
     }));
   };
 
@@ -321,23 +367,29 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col w-screen h-screen overflow-hidden bg-slate-950 text-slate-100">
-      {/* Top Bar Contract: 3 Zones (Brand Wordmark — 4 Concise Nav Links — 1 Primary Action) */}
-      <header className="flex items-center justify-between gap-2 md:gap-8 px-3 md:px-6 py-2.5 md:py-3 bg-slate-950 border-b border-slate-800 shrink-0 z-30 no-print">
-        <a
-          href="#konstruktor"
-          onClick={(e) => {
-            e.preventDefault();
-            setActiveTab('3d');
-          }}
-          className="text-sm sm:text-base md:text-lg font-bold tracking-tight text-white whitespace-nowrap shrink-0"
-        >
-          MebelPro 3D
-        </a>
+    <div className="flex flex-col w-screen h-dvh overflow-hidden bg-slate-950 text-slate-100">
+      {/* Top Bar: Clean & Minimal on Mobile, Full 3-Zone Nav on Desktop */}
+      <header className="flex items-center justify-between gap-3 md:gap-8 px-3.5 md:px-6 py-2.5 md:py-3 bg-slate-950 border-b border-slate-800 shrink-0 z-30 no-print">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <a
+            href="#konstruktor"
+            onClick={(e) => {
+              e.preventDefault();
+              setActiveTab('3d');
+            }}
+            className="text-base md:text-lg font-bold tracking-tight text-white whitespace-nowrap shrink-0"
+          >
+            MebelPro <span className="text-amber-400">3D</span>
+          </a>
+          <span className="md:hidden text-[11px] text-slate-400 truncate max-w-[150px]">
+            · {activeProject.name}
+          </span>
+        </div>
 
+        {/* Desktop Top Navigation */}
         <nav
           aria-label="Asosiy ishchi bo'limlar"
-          className="flex items-center gap-2.5 sm:gap-4 md:gap-7 text-[11px] sm:text-xs md:text-sm font-medium text-slate-300 overflow-x-auto"
+          className="hidden md:flex items-center gap-7 text-sm font-medium text-slate-300"
         >
           <button
             type="button"
@@ -377,10 +429,14 @@ export default function App() {
 
           <button
             type="button"
-            onClick={() => setShowProjectsModal(true)}
-            className="py-1 hover:text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            onClick={() => setActiveTab('projects')}
+            className={`py-1 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              activeTab === 'projects'
+                ? 'text-amber-400 underline underline-offset-8 decoration-2 font-semibold'
+                : 'hover:text-white'
+            }`}
           >
-            Loyihalarim
+            Loyihalarim ({projects.length})
           </button>
         </nav>
 
@@ -389,12 +445,13 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Workspace Area */}
-      <main className="flex-1 relative w-full h-full overflow-hidden">
+      {/* Main Workspace Area (clears MobileBottomNav on < md) */}
+      <main className="flex-1 relative w-full h-full overflow-hidden pb-[62px] md:pb-0">
         {activeTab === '3d' && (
           <div className="w-full h-full relative">
             <Viewport3D
               project={activeProject}
+              boards={boards}
               selectedModuleId={selectedModuleId}
               selectedBoardId={selectedBoardId}
               onSelectPart={(bId, mId) => {
@@ -426,6 +483,10 @@ export default function App() {
               onDuplicateModule={handleDuplicateModule}
               onDeleteModule={handleDeleteModule}
               onUpdateOverride={handleUpdateOverride}
+              onResetOverride={handleResetOverride}
+              onAddCustomPart={handleAddCustomPart}
+              onUpdateCustomPart={handleUpdateCustomPart}
+              onDeleteCustomPart={handleDeleteCustomPart}
               explodeFactor={explodeFactor}
               onChangeExplodeFactor={setExplodeFactor}
               doorsOpen={doorsOpen}
@@ -444,41 +505,60 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'raskroy' && (
-          <RaskroyView
-            project={activeProject}
-            cutList={cutList}
-            sheets={sheets}
-            onUpdateOverride={handleUpdateOverride}
-            onAddCustomPart={handleAddCustomPart}
-            onDeleteCustomPart={handleDeleteCustomPart}
-            onUpdateKerfSettings={handleUpdateKerfSettings}
-          />
-        )}
+        <Suspense
+          fallback={
+            <div className="w-full h-full flex items-center justify-center bg-slate-950 text-xs text-slate-400">
+              Yuklanmoqda...
+            </div>
+          }
+        >
+          {activeTab === 'raskroy' && (
+            <RaskroyView
+              project={activeProject}
+              cutList={cutList}
+              sheets={sheets}
+              onUpdateOverride={handleUpdateOverride}
+              onAddCustomPart={handleAddCustomPart}
+              onDeleteCustomPart={handleDeleteCustomPart}
+              onUpdateKerfSettings={handleUpdateKerfSettings}
+            />
+          )}
 
-        {activeTab === 'materials' && (
-          <MaterialsBOMView
-            project={activeProject}
-            bom={bom}
-            onUpdatePrices={handleUpdatePrices}
-          />
-        )}
+          {activeTab === 'materials' && (
+            <MaterialsBOMView
+              project={activeProject}
+              bom={bom}
+              onUpdatePrices={handleUpdatePrices}
+            />
+          )}
+
+          {activeTab === 'projects' && (
+            <ProjectsView
+              projects={projects}
+              activeProjectId={activeProject.id}
+              onSelectProject={(id) => {
+                setActiveProjectId(id);
+                const target = projects.find((p) => p.id === id);
+                setSelectedModuleId(target?.modules[0]?.id || null);
+                setSelectedBoardId(null);
+                setActiveTab('3d');
+              }}
+              onCreateProject={(newProj) => {
+                handleCreateProject(newProj);
+                setActiveTab('3d');
+              }}
+              onDeleteProject={handleDeleteProject}
+            />
+          )}
+        </Suspense>
       </main>
 
-      {/* Projects & Templates Modal */}
-      <ProjectsModal
-        isOpen={showProjectsModal}
-        onClose={() => setShowProjectsModal(false)}
-        projects={projects}
-        activeProjectId={activeProject.id}
-        onSelectProject={(id) => {
-          setActiveProjectId(id);
-          const target = projects.find((p) => p.id === id);
-          setSelectedModuleId(target?.modules[0]?.id || null);
-          setSelectedBoardId(null);
-        }}
-        onCreateProject={handleCreateProject}
-        onDeleteProject={handleDeleteProject}
+      {/* Mobile Bottom Navigation Bar (< md) */}
+      <MobileBottomNav
+        activeTab={activeTab}
+        cutListCount={cutList.length}
+        projectsCount={projects.length}
+        onSelectTab={setActiveTab}
       />
 
       {/* Offline Banner */}

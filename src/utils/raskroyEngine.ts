@@ -14,6 +14,7 @@ import {
   MaterialSpec,
   ModuleCostEstimate,
   ModuleKind,
+  PartOverride,
   PartRole,
   PlacedSheetPart,
   RaskroySheet,
@@ -347,11 +348,70 @@ export function calcPartEdgeMeters(
 }
 
 /**
+ * Helper to transform a module-local board (in 0..W, Y, 0..D) into room coordinates
+ * taking `rotationY` (0, 90, 180, 270) into account so the module's bounding box minX=mod.x, minZ=mod.z.
+ */
+function transformBoardForRotation(
+  raw: Generated3DBoard,
+  mod: FurnitureModule,
+): Generated3DBoard {
+  const rot = mod.rotationY ?? 0;
+  if (rot === 0) return { ...raw, rotationY: 0 };
+
+  const W = mod.width;
+  const D = mod.depth;
+  const lx = raw.centerX - mod.x;
+  const lz = raw.centerZ - mod.z;
+
+  let nx = lx;
+  let nz = lz;
+  let nsx = raw.sizeX;
+  let nsz = raw.sizeZ;
+  let ex = raw.explodeVec[0];
+  let ez = raw.explodeVec[2];
+
+  if (rot === 90) {
+    // +Z front becomes +X front; footprint X=[x..x+D], Z=[z..z+W]
+    nx = lz;
+    nz = W - lx;
+    nsx = raw.sizeZ;
+    nsz = raw.sizeX;
+    ex = raw.explodeVec[2];
+    ez = -raw.explodeVec[0];
+  } else if (rot === 180) {
+    // +Z front becomes -Z front; footprint X=[x..x+W], Z=[z..z+D]
+    nx = W - lx;
+    nz = D - lz;
+    ex = -raw.explodeVec[0];
+    ez = -raw.explodeVec[2];
+  } else if (rot === 270) {
+    // +Z front becomes -X front; footprint X=[x..x+D], Z=[z..z+W]
+    nx = D - lz;
+    nz = lx;
+    nsx = raw.sizeZ;
+    nsz = raw.sizeX;
+    ex = -raw.explodeVec[2];
+    ez = raw.explodeVec[0];
+  }
+
+  return {
+    ...raw,
+    centerX: mod.x + nx,
+    centerZ: mod.z + nz,
+    sizeX: nsx,
+    sizeZ: nsz,
+    rotationY: rot,
+    explodeVec: [ex, raw.explodeVec[1], ez],
+  };
+}
+
+/**
  * Decomposes a single parametric FurnitureModule into exact 3D boards with millimeter accuracy.
  */
 export function decomposeModuleToBoards(
   mod: FurnitureModule,
-  overrides: Record<string, { role?: PartRole; name?: string; material?: MaterialId; edges?: EdgeConfig; cutLength?: number; cutWidth?: number }> = {},
+  overrides: Record<string, PartOverride> = {},
+  includeHidden: boolean = false,
 ): Generated3DBoard[] {
   const boards: Generated3DBoard[] = [];
   const t = mod.boardThickness;
@@ -363,21 +423,51 @@ export function decomposeModuleToBoards(
   const baseZ = mod.z;
 
   const innerW = Math.max(50, W - 2 * t);
+  const facadeStyle = mod.facadeStyle ?? 'overlay';
+  const handleStyle = mod.handleStyle ?? 'bar';
+
+  const effectiveTopType =
+    mod.topPanelType ??
+    (mod.kind === 'yozuv_stoli'
+      ? 'none'
+      : mod.kind === 'pastki_moyka' || mod.kind === 'pastki_plita' || mod.kind === 'pastki_duxovka'
+      ? 'tsarga'
+      : 'full');
+
+  const effectiveBottomType =
+    mod.bottomPanelType ?? (mod.kind === 'yozuv_stoli' ? 'none' : 'full');
+
+  const effectiveBackType = mod.backPanelType ?? 'overlay_xdf';
 
   const pushBoard = (raw: Generated3DBoard) => {
     const ov = overrides[raw.id];
+    if (ov?.hidden && !includeHidden) {
+      return;
+    }
     if (ov) {
+      const hasChange = Boolean(
+        ov.role !== undefined ||
+          ov.name !== undefined ||
+          ov.material !== undefined ||
+          ov.edges !== undefined ||
+          ov.cutLength !== undefined ||
+          ov.cutWidth !== undefined ||
+          ov.color !== undefined ||
+          ov.hidden !== undefined,
+      );
       raw = {
         ...raw,
         role: ov.role ?? raw.role,
         name: ov.name ?? raw.name,
         material: ov.material ?? raw.material,
+        color: ov.color ?? raw.color,
         edges: ov.edges ? { ...ov.edges } : raw.edges,
         cutLength: ov.cutLength ?? raw.cutLength,
         cutWidth: ov.cutWidth ?? raw.cutWidth,
+        isOverridden: hasChange,
       };
     }
-    boards.push(raw);
+    boards.push(transformBoardForRotation(raw, mod));
   };
 
   // 1. Left Side Panel (Chap yon devor - Stoyka)
@@ -424,8 +514,32 @@ export function decomposeModuleToBoards(
     explodeVec: [1, 0, 0],
   });
 
-  // Desk (Yozuv stoli) has a back modesty panel (Tsarga) and top countertop instead of a bottom board
-  if (mod.kind === 'yozuv_stoli') {
+  // 3. Bottom Horizon (Ostki gorizont / Taglik)
+  if (effectiveBottomType === 'full') {
+    pushBoard({
+      id: `${mod.id}:bottom_panel`,
+      moduleId: mod.id,
+      moduleName: mod.name,
+      name: 'Ostki qism (Gorizont)',
+      role: 'ostki_ustki',
+      material: mod.bodyMaterial,
+      color: mod.bodyColor,
+      cutLength: innerW,
+      cutWidth: D,
+      thickness: t,
+      edges: createEdgeConfig('0.4mm', 'none', 'none', 'none'),
+      centerX: baseX + W / 2,
+      centerY: baseY + t / 2,
+      centerZ: baseZ + D / 2,
+      sizeX: innerW,
+      sizeY: t,
+      sizeZ: D,
+      explodeVec: [0, -0.8, 0],
+    });
+  }
+
+  // 4. Top Panel, Tsarga, or Desk Modesty Panel
+  if (mod.kind === 'yozuv_stoli' && effectiveTopType === 'none') {
     const tsargaH = Math.min(350, Math.round(H * 0.45));
     pushBoard({
       id: `${mod.id}:desk_tsarga`,
@@ -447,13 +561,55 @@ export function decomposeModuleToBoards(
       sizeZ: t,
       explodeVec: [0, 0, -0.8],
     });
-  } else {
-    // 3. Bottom Horizon (Ostki gorizont / Taglik)
+  } else if (effectiveTopType === 'tsarga') {
+    const railW = 100;
     pushBoard({
-      id: `${mod.id}:bottom_panel`,
+      id: `${mod.id}:top_tsarga_front`,
       moduleId: mod.id,
       moduleName: mod.name,
-      name: 'Ostki qism (Gorizont)',
+      name: 'Old ustki tsarga (Planka)',
+      role: 'tsarga',
+      material: mod.bodyMaterial,
+      color: mod.bodyColor,
+      cutLength: innerW,
+      cutWidth: railW,
+      thickness: t,
+      edges: createEdgeConfig('0.4mm', '0.4mm', 'none', 'none'),
+      centerX: baseX + W / 2,
+      centerY: baseY + H - t / 2,
+      centerZ: baseZ + D - railW / 2,
+      sizeX: innerW,
+      sizeY: t,
+      sizeZ: railW,
+      explodeVec: [0, 0.7, 0.4],
+    });
+
+    pushBoard({
+      id: `${mod.id}:top_tsarga_back`,
+      moduleId: mod.id,
+      moduleName: mod.name,
+      name: 'Orqa ustki tsarga (Planka)',
+      role: 'tsarga',
+      material: mod.bodyMaterial,
+      color: mod.bodyColor,
+      cutLength: innerW,
+      cutWidth: railW,
+      thickness: t,
+      edges: createEdgeConfig('0.4mm', '0.4mm', 'none', 'none'),
+      centerX: baseX + W / 2,
+      centerY: baseY + H - t / 2,
+      centerZ: baseZ + railW / 2,
+      sizeX: innerW,
+      sizeY: t,
+      sizeZ: railW,
+      explodeVec: [0, 0.7, -0.4],
+    });
+  } else if (effectiveTopType === 'full') {
+    pushBoard({
+      id: `${mod.id}:top_panel`,
+      moduleId: mod.id,
+      moduleName: mod.name,
+      name: 'Ustki qism (Gorizont)',
       role: 'ostki_ustki',
       material: mod.bodyMaterial,
       color: mod.bodyColor,
@@ -462,87 +618,19 @@ export function decomposeModuleToBoards(
       thickness: t,
       edges: createEdgeConfig('0.4mm', 'none', 'none', 'none'),
       centerX: baseX + W / 2,
-      centerY: baseY + t / 2,
+      centerY: baseY + H - t / 2,
       centerZ: baseZ + D / 2,
       sizeX: innerW,
       sizeY: t,
       sizeZ: D,
-      explodeVec: [0, -0.8, 0],
+      explodeVec: [0, 0.8, 0],
     });
-
-    // 4. Top Panel or Front/Back Tsarga (Sink, Stove, and Oven cabinets use 2 horizontal tsarga rails of 100mm width at top)
-    if (mod.kind === 'pastki_moyka' || mod.kind === 'pastki_plita' || mod.kind === 'pastki_duxovka') {
-      const railW = 100;
-      pushBoard({
-        id: `${mod.id}:top_tsarga_front`,
-        moduleId: mod.id,
-        moduleName: mod.name,
-        name: 'Old ustki tsarga (Planka)',
-        role: 'tsarga',
-        material: mod.bodyMaterial,
-        color: mod.bodyColor,
-        cutLength: innerW,
-        cutWidth: railW,
-        thickness: t,
-        edges: createEdgeConfig('0.4mm', '0.4mm', 'none', 'none'),
-        centerX: baseX + W / 2,
-        centerY: baseY + H - t / 2,
-        centerZ: baseZ + D - railW / 2,
-        sizeX: innerW,
-        sizeY: t,
-        sizeZ: railW,
-        explodeVec: [0, 0.7, 0.4],
-      });
-
-      pushBoard({
-        id: `${mod.id}:top_tsarga_back`,
-        moduleId: mod.id,
-        moduleName: mod.name,
-        name: 'Orqa ustki tsarga (Planka)',
-        role: 'tsarga',
-        material: mod.bodyMaterial,
-        color: mod.bodyColor,
-        cutLength: innerW,
-        cutWidth: railW,
-        thickness: t,
-        edges: createEdgeConfig('0.4mm', '0.4mm', 'none', 'none'),
-        centerX: baseX + W / 2,
-        centerY: baseY + H - t / 2,
-        centerZ: baseZ + railW / 2,
-        sizeX: innerW,
-        sizeY: t,
-        sizeZ: railW,
-        explodeVec: [0, 0.7, -0.4],
-      });
-    } else {
-      pushBoard({
-        id: `${mod.id}:top_panel`,
-        moduleId: mod.id,
-        moduleName: mod.name,
-        name: 'Ustki qism (Gorizont)',
-        role: 'ostki_ustki',
-        material: mod.bodyMaterial,
-        color: mod.bodyColor,
-        cutLength: innerW,
-        cutWidth: D,
-        thickness: t,
-        edges: createEdgeConfig('0.4mm', 'none', 'none', 'none'),
-        centerX: baseX + W / 2,
-        centerY: baseY + H - t / 2,
-        centerZ: baseZ + D / 2,
-        sizeX: innerW,
-        sizeY: t,
-        sizeZ: D,
-        explodeVec: [0, 0.8, 0],
-      });
-    }
   }
 
-  // 4b. Built-in Oven Cabinet (`pastki_duxovka`) special structure: horizontal oven support shelf + bottom drawer
+  // 4b. Built-in Oven Cabinet (`pastki_duxovka`) special structure
+  const facadeThick = MATERIAL_SPECS[mod.facadeMaterial]?.thickness || t;
   if (mod.kind === 'pastki_duxovka') {
     const bottomDrawerH = Math.max(100, H - 600);
-    const facadeThick = MATERIAL_SPECS[mod.facadeMaterial]?.thickness || t;
-    // Horizontal oven support shelf at bottomDrawerH
     pushBoard({
       id: `${mod.id}:oven_shelf`,
       moduleId: mod.id,
@@ -564,7 +652,6 @@ export function decomposeModuleToBoards(
       explodeVec: [0, 0, 0.4],
     });
 
-    // Bottom appliance drawer front
     pushBoard({
       id: `${mod.id}:oven_drawer_front`,
       moduleId: mod.id,
@@ -584,35 +671,125 @@ export function decomposeModuleToBoards(
       sizeY: Math.max(60, bottomDrawerH - 4),
       sizeZ: facadeThick,
       isDrawer: true,
+      facadeStyle,
+      handleStyle,
+      handleOrientation: 'horizontal',
       explodeVec: [0, -0.2, 1.4],
     });
   }
 
-  // 4c. Vertical Center Divider (`centerDivider` — O'rta to'siq / Peregorodka)
-  const hasVertDivider = Boolean(mod.centerDivider) && mod.kind !== 'yozuv_stoli' && mod.kind !== 'pastki_duxovka';
-  if (hasVertDivider) {
-    const divH = Math.max(60, H - 2 * t);
-    const divD = Math.max(80, D - 10);
+  // Compute Zone Split when BOTH Drawers and Doors (or Shelves) exist in the same module
+  const hasDrawers = mod.drawerCount > 0 && mod.kind !== 'pastki_duxovka';
+  const hasDoors = mod.doorCount > 0 && mod.kind !== 'pastki_duxovka';
+  const isCombinedZone = hasDrawers && (hasDoors || mod.shelfCount > 0);
+  const drawerPosition = mod.drawerPosition ?? 'bottom';
+
+  let drawerZoneStartY = 0; // local Y from 0..H
+  let drawerZoneH = hasDrawers ? H : 0;
+  let upperZoneStartY = 0;
+  let upperZoneH = H;
+
+  if (isCombinedZone) {
+    const defaultDZ = Math.min(Math.round(H * 0.48), Math.max(150, mod.drawerCount * 165));
+    drawerZoneH = Math.max(120, Math.min(H - 180, mod.drawerZoneHeight ?? defaultDZ));
+    upperZoneH = H - drawerZoneH;
+    if (drawerPosition === 'top') {
+      drawerZoneStartY = upperZoneH;
+      upperZoneStartY = 0;
+    } else {
+      drawerZoneStartY = 0;
+      upperZoneStartY = drawerZoneH;
+    }
+
+    // Emit horizontal zone separator shelf between drawer zone & door/shelf zone
+    const sepY = drawerPosition === 'top' ? upperZoneH : drawerZoneH;
     pushBoard({
-      id: `${mod.id}:center_divider`,
+      id: `${mod.id}:zone_divider`,
       moduleId: mod.id,
       moduleName: mod.name,
-      name: "O'rta vertikal to'siq (Peregorodka)",
-      role: 'orta_devor',
+      name: 'Bo\'limlararo gorizont (Tortma/Eshik)',
+      role: 'ostki_ustki',
       material: mod.bodyMaterial,
       color: mod.bodyColor,
-      cutLength: divH,
-      cutWidth: divD,
+      cutLength: innerW,
+      cutWidth: D - 10,
       thickness: t,
       edges: createEdgeConfig('0.4mm', 'none', 'none', 'none'),
       centerX: baseX + W / 2,
-      centerY: baseY + H / 2,
-      centerZ: baseZ + 6 + divD / 2,
-      sizeX: t,
-      sizeY: divH,
-      sizeZ: divD,
-      explodeVec: [0, 0, 0.35],
+      centerY: baseY + sepY,
+      centerZ: baseZ + (D - 10) / 2 + 5,
+      sizeX: innerW,
+      sizeY: t,
+      sizeZ: D - 10,
+      explodeVec: [0, 0, 0.45],
     });
+  }
+
+  // 4c. Vertical Dividers (`dividerCount` 0 | 1 | 2 or legacy `centerDivider`)
+  const rawDivCount =
+    mod.dividerCount !== undefined ? mod.dividerCount : mod.centerDivider ? 1 : 0;
+  const divCount =
+    mod.kind !== 'yozuv_stoli' && mod.kind !== 'pastki_duxovka'
+      ? Math.max(0, Math.min(2, rawDivCount))
+      : 0;
+
+  if (divCount > 0) {
+    const botDeduction = effectiveBottomType === 'full' ? t : 0;
+    const topDeduction = effectiveTopType !== 'none' ? t : 0;
+    const divTotalH = isCombinedZone ? upperZoneH - t : H - botDeduction - topDeduction;
+    const divCenterY = isCombinedZone
+      ? baseY + upperZoneStartY + upperZoneH / 2
+      : baseY + botDeduction + divTotalH / 2;
+    const divD = Math.max(80, D - 10);
+
+    if (divTotalH >= 60) {
+      if (divCount === 1) {
+        pushBoard({
+          id: `${mod.id}:center_divider`,
+          moduleId: mod.id,
+          moduleName: mod.name,
+          name: "O'rta vertikal to'siq (Peregorodka)",
+          role: 'orta_devor',
+          material: mod.bodyMaterial,
+          color: mod.bodyColor,
+          cutLength: divTotalH,
+          cutWidth: divD,
+          thickness: t,
+          edges: createEdgeConfig('0.4mm', 'none', 'none', 'none'),
+          centerX: baseX + W / 2,
+          centerY: divCenterY,
+          centerZ: baseZ + 6 + divD / 2,
+          sizeX: t,
+          sizeY: divTotalH,
+          sizeZ: divD,
+          explodeVec: [0, 0, 0.35],
+        });
+      } else {
+        for (let dIdx = 1; dIdx <= divCount; dIdx++) {
+          const xPos = baseX + (W / (divCount + 1)) * dIdx;
+          pushBoard({
+            id: `${mod.id}:divider_${dIdx}`,
+            moduleId: mod.id,
+            moduleName: mod.name,
+            name: `Vertikal to'siq #${dIdx} (Peregorodka)`,
+            role: 'orta_devor',
+            material: mod.bodyMaterial,
+            color: mod.bodyColor,
+            cutLength: divTotalH,
+            cutWidth: divD,
+            thickness: t,
+            edges: createEdgeConfig('0.4mm', 'none', 'none', 'none'),
+            centerX: xPos,
+            centerY: divCenterY,
+            centerZ: baseZ + 6 + divD / 2,
+            sizeX: t,
+            sizeY: divTotalH,
+            sizeZ: divD,
+            explodeVec: [0, 0, 0.35],
+          });
+        }
+      }
+    }
   }
 
   // 4d. Front Base Plinth / Toe-Kick (`hasToeKick` — Old tsokol plankasi)
@@ -639,15 +816,45 @@ export function decomposeModuleToBoards(
     });
   }
 
-  // 5. Internal Shelves (Ichki tokchalar — supports split compartments if centerDivider is active)
-  if (mod.shelfCount > 0 && mod.drawerCount === 0 && mod.kind !== 'pastki_duxovka') {
+  // 5. Internal Shelves (Ichki tokchalar — supports 1..3 compartments & combined drawer+shelf zone)
+  const canHaveShelves =
+    mod.shelfCount > 0 && mod.kind !== 'pastki_duxovka' && (!hasDrawers || isCombinedZone);
+  if (canHaveShelves) {
     const shelfD = Math.max(80, D - 20);
-    const usableH = H - 2 * t;
-    if (hasVertDivider) {
+    const botDed = isCombinedZone ? t : effectiveBottomType === 'full' ? t : 0;
+    const topDed = isCombinedZone ? t : effectiveTopType !== 'none' ? t : 0;
+    const usableH = Math.max(60, upperZoneH - botDed - topDed);
+    const compCount = divCount + 1;
+
+    if (compCount === 1) {
+      const shelfW = Math.max(50, innerW - 2);
+      for (let i = 1; i <= mod.shelfCount; i++) {
+        const yOffset = upperZoneStartY + botDed + (usableH / (mod.shelfCount + 1)) * i;
+        pushBoard({
+          id: `${mod.id}:shelf_${i}`,
+          moduleId: mod.id,
+          moduleName: mod.name,
+          name: `Ichki tokcha #${i}`,
+          role: 'tokcha',
+          material: mod.bodyMaterial,
+          color: mod.bodyColor,
+          cutLength: shelfW,
+          cutWidth: shelfD,
+          thickness: t,
+          edges: createEdgeConfig('0.4mm', 'none', 'none', 'none'),
+          centerX: baseX + W / 2,
+          centerY: baseY + yOffset,
+          centerZ: baseZ + 6 + shelfD / 2,
+          sizeX: shelfW,
+          sizeY: t,
+          sizeZ: shelfD,
+          explodeVec: [0, 0, 0.5 * i],
+        });
+      }
+    } else if (compCount === 2) {
       const halfShelfW = Math.max(50, Math.floor((innerW - t) / 2) - 2);
       for (let i = 1; i <= mod.shelfCount; i++) {
-        const yOffset = t + (usableH / (mod.shelfCount + 1)) * i;
-        // Left compartment shelf
+        const yOffset = upperZoneStartY + botDed + (usableH / (mod.shelfCount + 1)) * i;
         pushBoard({
           id: `${mod.id}:shelf_${i}_L`,
           moduleId: mod.id,
@@ -668,7 +875,6 @@ export function decomposeModuleToBoards(
           sizeZ: shelfD,
           explodeVec: [-0.2, 0, 0.5 * i],
         });
-        // Right compartment shelf
         pushBoard({
           id: `${mod.id}:shelf_${i}_R`,
           moduleId: mod.id,
@@ -691,29 +897,34 @@ export function decomposeModuleToBoards(
         });
       }
     } else {
-      const shelfW = Math.max(50, innerW - 2);
+      // 3 compartments
+      const partShelfW = Math.max(50, Math.floor((innerW - 2 * t) / 3) - 2);
       for (let i = 1; i <= mod.shelfCount; i++) {
-        const yOffset = t + (usableH / (mod.shelfCount + 1)) * i;
-        pushBoard({
-          id: `${mod.id}:shelf_${i}`,
-          moduleId: mod.id,
-          moduleName: mod.name,
-          name: `Ichki tokcha #${i}`,
-          role: 'tokcha',
-          material: mod.bodyMaterial,
-          color: mod.bodyColor,
-          cutLength: shelfW,
-          cutWidth: shelfD,
-          thickness: t,
-          edges: createEdgeConfig('0.4mm', 'none', 'none', 'none'),
-          centerX: baseX + W / 2,
-          centerY: baseY + yOffset,
-          centerZ: baseZ + 6 + shelfD / 2,
-          sizeX: shelfW,
-          sizeY: t,
-          sizeZ: shelfD,
-          explodeVec: [0, 0, 0.5 * i],
-        });
+        const yOffset = upperZoneStartY + botDed + (usableH / (mod.shelfCount + 1)) * i;
+        for (let c = 0; c < 3; c++) {
+          const compLeft = baseX + t + c * ((innerW - 2 * t) / 3 + t);
+          const compLabel = c === 0 ? 'Chap' : c === 1 ? "O'rta" : "O'ng";
+          pushBoard({
+            id: `${mod.id}:shelf_${i}_C${c + 1}`,
+            moduleId: mod.id,
+            moduleName: mod.name,
+            name: `Ichki tokcha #${i} (${compLabel})`,
+            role: 'tokcha',
+            material: mod.bodyMaterial,
+            color: mod.bodyColor,
+            cutLength: partShelfW,
+            cutWidth: shelfD,
+            thickness: t,
+            edges: createEdgeConfig('0.4mm', 'none', 'none', 'none'),
+            centerX: compLeft + partShelfW / 2 + 1,
+            centerY: baseY + yOffset,
+            centerZ: baseZ + 6 + shelfD / 2,
+            sizeX: partShelfW,
+            sizeY: t,
+            sizeZ: shelfD,
+            explodeVec: [(c - 1) * 0.25, 0, 0.5 * i],
+          });
+        }
       }
     }
   }
@@ -744,101 +955,161 @@ export function decomposeModuleToBoards(
     });
   }
 
-  // 7. Doors (Fasad eshiklar)
-  const facadeThick = MATERIAL_SPECS[mod.facadeMaterial]?.thickness || t;
-  if (mod.doorCount === 1 && mod.drawerCount === 0 && mod.kind !== 'pastki_duxovka') {
-    const doorH = Math.max(60, H - 4);
-    const doorW = Math.max(60, W - 4);
-    const hingeSide =
-      mod.doorHinge || (mod.handleOrientation === 'horizontal' ? 'top' : 'left');
-    pushBoard({
-      id: `${mod.id}:door_1`,
-      moduleId: mod.id,
-      moduleName: mod.name,
-      name: 'Fasad eshik',
-      role: 'fasad_eshik',
-      material: mod.facadeMaterial,
-      color: mod.facadeColor,
-      cutLength: doorH,
-      cutWidth: doorW,
-      thickness: facadeThick,
-      edges: createEdgeConfig('2mm', '2mm', '2mm', '2mm'),
-      centerX: baseX + W / 2,
-      centerY: baseY + H / 2,
-      centerZ: baseZ + D + facadeThick / 2 + 1,
-      sizeX: doorW,
-      sizeY: doorH,
-      sizeZ: facadeThick,
-      isDoor: true,
-      doorHingeSide: hingeSide,
-      explodeVec: [0, 0, 1.4],
-    });
-  } else if (mod.doorCount === 2 && mod.drawerCount === 0 && mod.kind !== 'pastki_duxovka') {
-    const doorH = Math.max(60, H - 4);
-    const singleDoorW = Math.max(60, Math.floor(W / 2) - 4);
-    // Left door
-    pushBoard({
-      id: `${mod.id}:door_left`,
-      moduleId: mod.id,
-      moduleName: mod.name,
-      name: 'Fasad eshik (Chap)',
-      role: 'fasad_eshik',
-      material: mod.facadeMaterial,
-      color: mod.facadeColor,
-      cutLength: doorH,
-      cutWidth: singleDoorW,
-      thickness: facadeThick,
-      edges: createEdgeConfig('2mm', '2mm', '2mm', '2mm'),
-      centerX: baseX + W / 4,
-      centerY: baseY + H / 2,
-      centerZ: baseZ + D + facadeThick / 2 + 1,
-      sizeX: singleDoorW,
-      sizeY: doorH,
-      sizeZ: facadeThick,
-      isDoor: true,
-      doorHingeSide: 'left',
-      explodeVec: [-0.4, 0, 1.4],
-    });
-    // Right door
-    pushBoard({
-      id: `${mod.id}:door_right`,
-      moduleId: mod.id,
-      moduleName: mod.name,
-      name: "Fasad eshik (O'ng)",
-      role: 'fasad_eshik',
-      material: mod.facadeMaterial,
-      color: mod.facadeColor,
-      cutLength: doorH,
-      cutWidth: singleDoorW,
-      thickness: facadeThick,
-      edges: createEdgeConfig('2mm', '2mm', '2mm', '2mm'),
-      centerX: baseX + (W * 3) / 4,
-      centerY: baseY + H / 2,
-      centerZ: baseZ + D + facadeThick / 2 + 1,
-      sizeX: singleDoorW,
-      sizeY: doorH,
-      sizeZ: facadeThick,
-      isDoor: true,
-      doorHingeSide: 'right',
-      explodeVec: [0.4, 0, 1.4],
-    });
+  // 7. Doors (Fasad eshiklar — 1, 2, or 3 doors; supports overlay, inset, and vitrine; works alongside drawers)
+  if (hasDoors) {
+    const isInset = facadeStyle === 'inset';
+    const doorAvailW = isInset ? innerW : W;
+    const doorAvailH = isInset
+      ? Math.max(60, upperZoneH - (isCombinedZone ? t : 2 * t))
+      : upperZoneH;
+    const doorH = Math.max(60, doorAvailH - 4);
+    const doorCenterY = baseY + upperZoneStartY + upperZoneH / 2;
+    const doorCenterZ = isInset
+      ? baseZ + D - facadeThick / 2 - 2
+      : baseZ + D + facadeThick / 2 + 1;
+
+    if (mod.doorCount === 1) {
+      const doorW = Math.max(60, doorAvailW - 4);
+      const hingeSide =
+        mod.doorHinge || (mod.handleOrientation === 'horizontal' ? 'top' : 'left');
+      pushBoard({
+        id: `${mod.id}:door_1`,
+        moduleId: mod.id,
+        moduleName: mod.name,
+        name: 'Fasad eshik',
+        role: 'fasad_eshik',
+        material: mod.facadeMaterial,
+        color: mod.facadeColor,
+        cutLength: doorH,
+        cutWidth: doorW,
+        thickness: facadeThick,
+        edges: createEdgeConfig('2mm', '2mm', '2mm', '2mm'),
+        centerX: baseX + W / 2,
+        centerY: doorCenterY,
+        centerZ: doorCenterZ,
+        sizeX: doorW,
+        sizeY: doorH,
+        sizeZ: facadeThick,
+        isDoor: true,
+        doorHingeSide: hingeSide,
+        facadeStyle,
+        handleStyle,
+        handleOrientation: mod.handleOrientation,
+        explodeVec: [0, 0, 1.4],
+      });
+    } else if (mod.doorCount === 2) {
+      const singleDoorW = Math.max(60, Math.floor(doorAvailW / 2) - 4);
+      const leftCenterX = isInset ? baseX + t + innerW / 4 : baseX + W / 4;
+      const rightCenterX = isInset ? baseX + W - t - innerW / 4 : baseX + (W * 3) / 4;
+
+      pushBoard({
+        id: `${mod.id}:door_left`,
+        moduleId: mod.id,
+        moduleName: mod.name,
+        name: 'Fasad eshik (Chap)',
+        role: 'fasad_eshik',
+        material: mod.facadeMaterial,
+        color: mod.facadeColor,
+        cutLength: doorH,
+        cutWidth: singleDoorW,
+        thickness: facadeThick,
+        edges: createEdgeConfig('2mm', '2mm', '2mm', '2mm'),
+        centerX: leftCenterX,
+        centerY: doorCenterY,
+        centerZ: doorCenterZ,
+        sizeX: singleDoorW,
+        sizeY: doorH,
+        sizeZ: facadeThick,
+        isDoor: true,
+        doorHingeSide: 'left',
+        facadeStyle,
+        handleStyle,
+        handleOrientation: mod.handleOrientation,
+        explodeVec: [-0.4, 0, 1.4],
+      });
+
+      pushBoard({
+        id: `${mod.id}:door_right`,
+        moduleId: mod.id,
+        moduleName: mod.name,
+        name: "Fasad eshik (O'ng)",
+        role: 'fasad_eshik',
+        material: mod.facadeMaterial,
+        color: mod.facadeColor,
+        cutLength: doorH,
+        cutWidth: singleDoorW,
+        thickness: facadeThick,
+        edges: createEdgeConfig('2mm', '2mm', '2mm', '2mm'),
+        centerX: rightCenterX,
+        centerY: doorCenterY,
+        centerZ: doorCenterZ,
+        sizeX: singleDoorW,
+        sizeY: doorH,
+        sizeZ: facadeThick,
+        isDoor: true,
+        doorHingeSide: 'right',
+        facadeStyle,
+        handleStyle,
+        handleOrientation: mod.handleOrientation,
+        explodeVec: [0.4, 0, 1.4],
+      });
+    } else if (mod.doorCount === 3) {
+      const singleDoorW = Math.max(60, Math.floor(doorAvailW / 3) - 4);
+      const startX = isInset ? baseX + t : baseX;
+      const positions = [
+        { id: 'door_left', label: 'Chap', cx: startX + doorAvailW / 6, hinge: 'left' as const, ex: -0.5 },
+        { id: 'door_mid', label: "O'rta", cx: startX + doorAvailW / 2, hinge: 'left' as const, ex: 0 },
+        { id: 'door_right', label: "O'ng", cx: startX + (doorAvailW * 5) / 6, hinge: 'right' as const, ex: 0.5 },
+      ];
+      for (const pos of positions) {
+        pushBoard({
+          id: `${mod.id}:${pos.id}`,
+          moduleId: mod.id,
+          moduleName: mod.name,
+          name: `Fasad eshik (${pos.label})`,
+          role: 'fasad_eshik',
+          material: mod.facadeMaterial,
+          color: mod.facadeColor,
+          cutLength: doorH,
+          cutWidth: singleDoorW,
+          thickness: facadeThick,
+          edges: createEdgeConfig('2mm', '2mm', '2mm', '2mm'),
+          centerX: pos.cx,
+          centerY: doorCenterY,
+          centerZ: doorCenterZ,
+          sizeX: singleDoorW,
+          sizeY: doorH,
+          sizeZ: facadeThick,
+          isDoor: true,
+          doorHingeSide: pos.hinge,
+          facadeStyle,
+          handleStyle,
+          handleOrientation: mod.handleOrientation,
+          explodeVec: [pos.ex, 0, 1.4],
+        });
+      }
+    }
   }
 
   // 8. Drawers (Tortma fasadlari va tortma qutilari)
-  if (mod.drawerCount > 0 && mod.kind !== 'pastki_duxovka') {
+  if (hasDrawers) {
     const count = mod.drawerCount;
     const gap = 4;
-    const singleFrontH = Math.max(60, Math.floor((H - gap * count) / count));
-    const frontW = Math.max(60, W - 4);
-    const boxDepth = Math.max(250, Math.floor((D - 50) / 50) * 50); // Standard 400, 450, 500mm slide length
-    const boxSideH = Math.max(70, singleFrontH - 55);
-    const boxInnerW = Math.max(80, innerW - 26 - 2 * t); // 26mm clearance for telescopic slides (13mm each side)
+    const isInset = facadeStyle === 'inset';
+    const zoneAvailW = isInset ? innerW : W;
+    const singleFrontH = Math.max(60, Math.floor((drawerZoneH - gap * count) / count));
+    const frontW = Math.max(60, zoneAvailW - 4);
+    const boxDepth = Math.max(250, Math.floor((D - 50) / 50) * 50);
+    const boxSideH = Math.max(60, singleFrontH - 55);
+    const boxInnerW = Math.max(80, innerW - 26 - 2 * t);
+    const frontZ = isInset
+      ? baseZ + D - facadeThick / 2 - 2
+      : baseZ + D + facadeThick / 2 + 1;
 
     for (let i = 0; i < count; i++) {
-      const slotCenterY = baseY + (H / count) * (i + 0.5);
-      const num = count - i; // #1 top, #2 middle, #3 bottom
+      const slotCenterY = baseY + drawerZoneStartY + (drawerZoneH / count) * (i + 0.5);
+      const num = count - i;
 
-      // Tortma fasadi (Nakladka)
       pushBoard({
         id: `${mod.id}:drawer_front_${num}`,
         moduleId: mod.id,
@@ -853,15 +1124,17 @@ export function decomposeModuleToBoards(
         edges: createEdgeConfig('2mm', '2mm', '2mm', '2mm'),
         centerX: baseX + W / 2,
         centerY: slotCenterY,
-        centerZ: baseZ + D + facadeThick / 2 + 1,
+        centerZ: frontZ,
         sizeX: frontW,
         sizeY: singleFrontH,
         sizeZ: facadeThick,
         isDrawer: true,
+        facadeStyle,
+        handleStyle,
+        handleOrientation: 'horizontal',
         explodeVec: [0, 0, 1.5],
       });
 
-      // Tortma yon devori (Chap va O'ng)
       pushBoard({
         id: `${mod.id}:drawer_side_l_${num}`,
         moduleId: mod.id,
@@ -906,7 +1179,6 @@ export function decomposeModuleToBoards(
         explodeVec: [0, 0, 1.1],
       });
 
-      // Tortma ichki old va orqa devori
       pushBoard({
         id: `${mod.id}:drawer_back_${num}`,
         moduleId: mod.id,
@@ -929,7 +1201,6 @@ export function decomposeModuleToBoards(
         explodeVec: [0, 0, 1.1],
       });
 
-      // Tortma tagligi XDF 4mm
       pushBoard({
         id: `${mod.id}:drawer_bottom_${num}`,
         moduleId: mod.id,
@@ -954,30 +1225,78 @@ export function decomposeModuleToBoards(
     }
   }
 
-  // 9. Back Panel (Orqa devor XDF 4mm)
-  if (mod.hasBackPanel && mod.kind !== 'yozuv_stoli' && mod.kind !== 'pastki_moyka') {
-    const backH = Math.max(60, H - 4);
-    const backW = Math.max(60, W - 4);
-    pushBoard({
-      id: `${mod.id}:back_xdf`,
-      moduleId: mod.id,
-      moduleName: mod.name,
-      name: 'Orqa devor (XDF 4mm)',
-      role: 'orqa_devor',
-      material: 'xdf_4',
-      color: '#D8D4CC',
-      cutLength: backH,
-      cutWidth: backW,
-      thickness: 4,
-      edges: createEdgeConfig('none', 'none', 'none', 'none'),
-      centerX: baseX + W / 2,
-      centerY: baseY + H / 2,
-      centerZ: baseZ + 2,
-      sizeX: backW,
-      sizeY: backH,
-      sizeZ: 4,
-      explodeVec: [0, 0, -1.1],
-    });
+  // 9. Back Panel (`overlay_xdf` | `inset_xdf` | `ldsp`)
+  if (mod.hasBackPanel) {
+    if (effectiveBackType === 'ldsp') {
+      const backH = Math.max(60, H - (effectiveBottomType === 'full' ? t : 0) - (effectiveTopType === 'full' ? t : 0));
+      const backW = innerW;
+      pushBoard({
+        id: `${mod.id}:back_xdf`,
+        moduleId: mod.id,
+        moduleName: mod.name,
+        name: 'Orqa devor (LDSP)',
+        role: 'orqa_devor',
+        material: mod.bodyMaterial,
+        color: mod.bodyColor,
+        cutLength: backH,
+        cutWidth: backW,
+        thickness: t,
+        edges: createEdgeConfig('none', 'none', 'none', 'none'),
+        centerX: baseX + W / 2,
+        centerY: baseY + (effectiveBottomType === 'full' ? t : 0) + backH / 2,
+        centerZ: baseZ + t / 2,
+        sizeX: backW,
+        sizeY: backH,
+        sizeZ: t,
+        explodeVec: [0, 0, -1.1],
+      });
+    } else if (effectiveBackType === 'inset_xdf') {
+      const backH = Math.max(60, H - 2 * t + 10);
+      const backW = Math.max(60, innerW + 10);
+      pushBoard({
+        id: `${mod.id}:back_xdf`,
+        moduleId: mod.id,
+        moduleName: mod.name,
+        name: 'Orqa devor (Pazli XDF 4mm)',
+        role: 'orqa_devor',
+        material: 'xdf_4',
+        color: '#D8D4CC',
+        cutLength: backH,
+        cutWidth: backW,
+        thickness: 4,
+        edges: createEdgeConfig('none', 'none', 'none', 'none'),
+        centerX: baseX + W / 2,
+        centerY: baseY + H / 2,
+        centerZ: baseZ + 16,
+        sizeX: backW,
+        sizeY: backH,
+        sizeZ: 4,
+        explodeVec: [0, 0, -1.1],
+      });
+    } else {
+      const backH = Math.max(60, H - 4);
+      const backW = Math.max(60, W - 4);
+      pushBoard({
+        id: `${mod.id}:back_xdf`,
+        moduleId: mod.id,
+        moduleName: mod.name,
+        name: 'Orqa devor (XDF 4mm)',
+        role: 'orqa_devor',
+        material: 'xdf_4',
+        color: '#D8D4CC',
+        cutLength: backH,
+        cutWidth: backW,
+        thickness: 4,
+        edges: createEdgeConfig('none', 'none', 'none', 'none'),
+        centerX: baseX + W / 2,
+        centerY: baseY + H / 2,
+        centerZ: baseZ + 2,
+        sizeX: backW,
+        sizeY: backH,
+        sizeZ: 4,
+        explodeVec: [0, 0, -1.1],
+      });
+    }
   }
 
   return boards;
@@ -1035,6 +1354,22 @@ export function decomposeProjectTo3DBoards(project: FurnitureProject): Generated
   }
 
   return allBoards;
+}
+
+/**
+ * Returns any module boards that were hidden by the user via `partOverrides[id].hidden`.
+ */
+export function getHiddenModuleBoards(project: FurnitureProject): Generated3DBoard[] {
+  const hidden: Generated3DBoard[] = [];
+  for (const mod of project.modules) {
+    const all = decomposeModuleToBoards(mod, project.partOverrides, true);
+    for (const b of all) {
+      if (project.partOverrides[b.id]?.hidden) {
+        hidden.push(b);
+      }
+    }
+  }
+  return hidden;
 }
 
 /**
@@ -1128,14 +1463,21 @@ export function nestPartsIntoSheets(
     const items: ItemToPlace[] = [];
     for (const r of rows) {
       for (let q = 0; q < r.quantity; q++) {
+        // Fit into usableL x usableW, preferring orientation that keeps part within bounds
+        let len = r.cutLength;
+        let wid = r.cutWidth;
+        if ((len > usableL || wid > usableW) && wid <= usableL && len <= usableW) {
+          len = r.cutWidth;
+          wid = r.cutLength;
+        }
         items.push({
           rowId: r.id,
           partIndex: r.index,
           partName: r.partName,
           moduleName: r.moduleName,
           role: r.role,
-          length: Math.min(r.cutLength, usableL),
-          width: Math.min(r.cutWidth, usableW),
+          length: Math.min(len, usableL),
+          width: Math.min(wid, usableW),
         });
       }
     }
@@ -1221,18 +1563,43 @@ export function nestPartsIntoSheets(
           });
           placed = true;
           break;
+        } else if (sheet.usedY + item.length <= usableW && item.width <= usableL) {
+          const newShelf: ShelfStrip = {
+            y: sheet.usedY,
+            height: item.length,
+            usedX: item.width + sawKerf,
+          };
+          sheet.shelves.push(newShelf);
+          sheet.usedY += item.length + sawKerf;
+          sheet.parts.push({
+            rowId: item.rowId,
+            partIndex: item.partIndex,
+            partName: item.partName,
+            moduleName: item.moduleName,
+            role: item.role,
+            x: sheetTrim,
+            y: sheetTrim + newShelf.y,
+            length: item.width,
+            width: item.length,
+            rotated: true,
+          });
+          placed = true;
+          break;
         }
       }
 
       if (!placed) {
+        const useRotated = item.width > usableW && item.length <= usableW && item.width <= usableL;
+        const pLen = useRotated ? item.width : item.length;
+        const pWid = useRotated ? item.length : item.width;
         const firstShelf: ShelfStrip = {
           y: 0,
-          height: item.width,
-          usedX: item.length + sawKerf,
+          height: pWid,
+          usedX: pLen + sawKerf,
         };
         const newSheet: OpenSheet = {
           shelves: [firstShelf],
-          usedY: item.width + sawKerf,
+          usedY: pWid + sawKerf,
           parts: [
             {
               rowId: item.rowId,
@@ -1242,9 +1609,9 @@ export function nestPartsIntoSheets(
               role: item.role,
               x: sheetTrim,
               y: sheetTrim,
-              length: item.length,
-              width: item.width,
-              rotated: false,
+              length: pLen,
+              width: pWid,
+              rotated: useRotated,
             },
           ],
         };
@@ -1335,20 +1702,23 @@ export function calculateBOMSummary(
   let clothesRodSets = 0;
 
   for (const mod of project.modules) {
+    const noHandle = mod.handleStyle === 'none';
     if (mod.kind === 'pastki_duxovka') {
       drawerSlidesPairs += 1;
-      handlesCount += 1;
-    } else if (mod.drawerCount === 0 && mod.doorCount > 0) {
-      const pairsPerDoor = mod.height > 1100 ? 2 : 1;
-      hingePairs += mod.doorCount * pairsPerDoor;
-      handlesCount += mod.doorCount;
-      if (mod.doorCount === 1 && (mod.doorHinge === 'top' || mod.handleOrientation === 'horizontal')) {
-        gasLiftCount += 2;
+      if (!noHandle) handlesCount += 1;
+    } else {
+      if (mod.doorCount > 0) {
+        const pairsPerDoor = mod.height > 1100 ? 2 : 1;
+        hingePairs += mod.doorCount * pairsPerDoor;
+        if (!noHandle) handlesCount += mod.doorCount;
+        if (mod.doorCount === 1 && (mod.doorHinge === 'top' || mod.handleOrientation === 'horizontal')) {
+          gasLiftCount += 2;
+        }
       }
-    }
-    if (mod.drawerCount > 0 && mod.kind !== 'pastki_duxovka') {
-      drawerSlidesPairs += mod.drawerCount;
-      handlesCount += mod.drawerCount;
+      if (mod.drawerCount > 0) {
+        drawerSlidesPairs += mod.drawerCount;
+        if (!noHandle) handlesCount += mod.drawerCount;
+      }
     }
     if (mod.legHeight > 0) {
       legsCount += mod.width >= 1200 ? 6 : 4;
@@ -1529,15 +1899,19 @@ export function calculateBOMSummary(
 
     // Module hardware
     let hwCost = edgeCost + partsCount * 3 * prices.konfirmat;
+    const noHandle = mod.handleStyle === 'none';
     if (mod.kind === 'pastki_duxovka') {
-      hwCost += prices.drawer_slide + prices.handle;
-    } else if (mod.drawerCount > 0) {
-      hwCost += mod.drawerCount * (prices.drawer_slide + prices.handle);
-    } else if (mod.doorCount > 0) {
-      const pairs = mod.height > 1100 ? 2 : 1;
-      hwCost += mod.doorCount * (pairs * prices.hinge_pair + prices.handle);
-      if (mod.doorCount === 1 && (mod.doorHinge === 'top' || mod.handleOrientation === 'horizontal')) {
-        hwCost += 2 * (prices.gas_lift ?? DEFAULT_PRICES.gas_lift!);
+      hwCost += prices.drawer_slide + (noHandle ? 0 : prices.handle);
+    } else {
+      if (mod.drawerCount > 0) {
+        hwCost += mod.drawerCount * (prices.drawer_slide + (noHandle ? 0 : prices.handle));
+      }
+      if (mod.doorCount > 0) {
+        const pairs = mod.height > 1100 ? 2 : 1;
+        hwCost += mod.doorCount * (pairs * prices.hinge_pair + (noHandle ? 0 : prices.handle));
+        if (mod.doorCount === 1 && (mod.doorHinge === 'top' || mod.handleOrientation === 'horizontal')) {
+          hwCost += 2 * (prices.gas_lift ?? DEFAULT_PRICES.gas_lift!);
+        }
       }
     }
     if (mod.legHeight > 0) {

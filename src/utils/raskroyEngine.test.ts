@@ -176,3 +176,83 @@ test('centerDivider, hasToeKick, built-in oven module, and per-module cost estim
   assert.ok(bom.turnkeyTotalCost > bom.grandTotalCost);
 });
 
+test('expanded module customization: combined doors+drawers, 2 dividers, rotationY, and hidden board override', () => {
+  const mod: FurnitureModule = {
+    id: 'combo_cab',
+    name: 'Kombinatsiyalangan shkaf',
+    kind: 'shkaf_kupe',
+    width: 1200,
+    height: 2000,
+    depth: 560,
+    x: 100,
+    y: 0,
+    z: 200,
+    rotationY: 90,
+    boardThickness: 16,
+    bodyMaterial: 'ldsp_16',
+    facadeMaterial: 'lmdf_16',
+    bodyColor: '#EAE6DF',
+    facadeColor: '#FFFFFF',
+    countertopColor: '#C6C2B9',
+    hasCountertop: false,
+    countertopThickness: 0,
+    countertopOverhangFront: 0,
+    legHeight: 60,
+    doorCount: 3,
+    handleOrientation: 'vertical',
+    handleStyle: 'profile',
+    facadeStyle: 'vitrine',
+    drawerCount: 2,
+    drawerPosition: 'bottom',
+    drawerZoneHeight: 400,
+    shelfCount: 2,
+    hasBackPanel: true,
+    backPanelType: 'ldsp',
+    dividerCount: 2,
+    topPanelType: 'full',
+    bottomPanelType: 'full',
+  };
+
+  const boards = decomposeModuleToBoards(mod);
+
+  // 3 doors + 2 drawers + zone divider + 2 vertical dividers + 2*3=6 shelves + LDSP back
+  const doors = boards.filter((b) => b.role === 'fasad_eshik');
+  assert.equal(doors.length, 3);
+  assert.equal(doors[0].facadeStyle, 'vitrine');
+  assert.equal(doors[0].handleStyle, 'profile');
+
+  const drawerFronts = boards.filter((b) => b.role === 'tortma_fasad');
+  assert.equal(drawerFronts.length, 2);
+
+  const zoneDiv = boards.find((b) => b.id === 'combo_cab:zone_divider');
+  assert.ok(zoneDiv);
+
+  const dividers = boards.filter((b) => b.role === 'orta_devor');
+  assert.equal(dividers.length, 2);
+
+  const shelves = boards.filter((b) => b.role === 'tokcha');
+  assert.equal(shelves.length, 6);
+
+  const backPanel = boards.find((b) => b.id === 'combo_cab:back_xdf');
+  assert.ok(backPanel);
+  assert.equal(backPanel.material, 'ldsp_16');
+
+  // Verify 90-degree rotation swapped X/Z bounding dimensions cleanly
+  const bottom = boards.find((b) => b.id === 'combo_cab:bottom_panel');
+  assert.ok(bottom);
+  assert.equal(bottom.sizeX, 560);
+  assert.equal(bottom.sizeZ, 1200 - 32);
+
+  // Verify hidden override excludes board from output
+  const filteredBoards = decomposeModuleToBoards(mod, {
+    'combo_cab:door_mid': { hidden: true },
+    'combo_cab:door_left': { color: '#373C45' },
+  });
+  assert.equal(filteredBoards.filter((b) => b.role === 'fasad_eshik').length, 2);
+  assert.equal(
+    filteredBoards.find((b) => b.id === 'combo_cab:door_left')?.color,
+    '#373C45',
+  );
+});
+
+

@@ -168,7 +168,7 @@ export const OfflineIndicator: React.FC = () => {
   if (isOnline) return null;
 
   return (
-    <div className="fixed bottom-4 left-4 z-50 flex items-center gap-2 rounded-lg bg-amber-500 px-3.5 py-2 text-xs font-semibold text-slate-950 shadow-lg">
+    <div className="fixed bottom-20 md:bottom-4 left-3 md:left-4 z-50 flex items-center gap-2 rounded-lg bg-amber-500 px-3.5 py-2 text-xs font-semibold text-slate-950 shadow-lg">
       <WifiOff className="w-4 h-4 shrink-0" />
       <span>Oflayn rejim — Barcha ma&apos;lumotlar qurilmada saqlanmoqda</span>
     </div>

@@ -3,12 +3,13 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { FurnitureProject, Generated3DBoard } from '../types/furniture';
-import { decomposeProjectTo3DBoards, FINISH_PRESETS } from '../utils/raskroyEngine';
+import { FINISH_PRESETS } from '../utils/raskroyEngine';
 
 export type CameraViewPreset = 'isometric' | 'front' | 'side' | 'top';
 
 interface Viewport3DProps {
   project: FurnitureProject;
+  boards: Generated3DBoard[];
   selectedModuleId: string | null;
   selectedBoardId: string | null;
   onSelectPart: (boardId: string | null, moduleId: string | null) => void;
@@ -56,7 +57,6 @@ function createParquetTexture(maxAnisotropy: number): THREE.CanvasTexture {
       ctx.fillStyle = shade;
       ctx.fillRect(x, y, plankW, plankH);
 
-      // Subtle wood grain lines
       ctx.strokeStyle = 'rgba(95, 65, 35, 0.09)';
       ctx.lineWidth = 1;
       for (let g = 1; g < 5; g++) {
@@ -66,7 +66,6 @@ function createParquetTexture(maxAnisotropy: number): THREE.CanvasTexture {
         ctx.stroke();
       }
 
-      // Plank seam border
       ctx.strokeStyle = 'rgba(75, 50, 26, 0.38)';
       ctx.lineWidth = 1.5;
       ctx.strokeRect(x, y, plankW, plankH);
@@ -109,6 +108,7 @@ function createWoodGrainBumpTexture(maxAnisotropy: number): THREE.CanvasTexture 
 
 export const Viewport3D: React.FC<Viewport3DProps> = ({
   project,
+  boards,
   selectedModuleId,
   selectedBoardId,
   onSelectPart,
@@ -131,6 +131,17 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     furnitureGroup: THREE.Group;
     roomGroup: THREE.Group;
     interactableMeshes: THREE.Mesh[];
+    sharedMaterials: {
+      chromeMat: THREE.MeshStandardMaterial;
+      legBlackMat: THREE.MeshStandardMaterial;
+      darkGlassMat: THREE.MeshStandardMaterial;
+      sinkSteelMat: THREE.MeshStandardMaterial;
+      sinkBasinMat: THREE.MeshStandardMaterial;
+      vitrineGlassMat: THREE.MeshStandardMaterial;
+      dimLineMat: THREE.LineBasicMaterial;
+      highlightLineMat: THREE.LineBasicMaterial;
+      defaultLineMat: THREE.LineBasicMaterial;
+    };
     requestRender: () => void;
     setCameraView: (preset: CameraViewPreset, centerXMm: number) => void;
     woodBumpTex: THREE.CanvasTexture;
@@ -146,9 +157,9 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xdbe0e6);
-    scene.fog = new THREE.Fog(0xdbe0e6, 7.5, 18);
+    scene.fog = new THREE.Fog(0xdbe0e6, 8.5, 22);
 
-    const camera = new THREE.PerspectiveCamera(38, width / height, 0.05, 30);
+    const camera = new THREE.PerspectiveCamera(38, width / height, 0.05, 35);
     camera.position.set(3.4, 2.35, 3.85);
 
     const renderer = new THREE.WebGLRenderer({
@@ -167,12 +178,10 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
 
-    // Studio Environment Reflection (RoomEnvironment)
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
     scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
     pmremGenerator.dispose();
 
-    // Balanced 3-Point Studio & Architectural Lighting
     const hemiLight = new THREE.HemisphereLight(0xf8fafc, 0xc2a382, 0.85);
     hemiLight.position.set(0, 4, 0);
     scene.add(hemiLight);
@@ -201,8 +210,8 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     controls.enableDamping = !isSoftwareGl;
     controls.dampingFactor = 0.08;
     controls.maxPolarAngle = Math.PI / 2 - 0.01;
-    controls.minDistance = 0.8;
-    controls.maxDistance = 10;
+    controls.minDistance = 0.7;
+    controls.maxDistance = 12;
     controls.target.set(1.4, 0.95, 0.35);
     controls.update();
 
@@ -215,9 +224,8 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     const parquetTex = createParquetTexture(maxAniso);
     const woodBumpTex = createWoodGrainBumpTexture(maxAniso);
 
-    // Build Architectural Corner Room (matching reference screenshot image_bea20856.png)
-    // Floor with wooden parquet planks
-    const floorGeo = new THREE.PlaneGeometry(5.6, 4.4);
+    // Architectural Corner Room
+    const floorGeo = new THREE.PlaneGeometry(5.8, 4.6);
     const floorMat = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       map: parquetTex,
@@ -230,12 +238,11 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     floorMesh.receiveShadow = true;
     roomGroup.add(floorMesh);
 
-    // Soft contact grounding plane under cabinet line
-    const contactGeo = new THREE.PlaneGeometry(3.4, 0.9);
+    const contactGeo = new THREE.PlaneGeometry(3.6, 0.95);
     const contactMat = new THREE.MeshBasicMaterial({
       color: 0x261c10,
       transparent: true,
-      opacity: 0.22,
+      opacity: 0.2,
       depthWrite: false,
     });
     const contactPlane = new THREE.Mesh(contactGeo, contactMat);
@@ -243,45 +250,88 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     contactPlane.position.set(1.4, 0.002, 0.32);
     roomGroup.add(contactPlane);
 
-    // Back wall (#ECEEF0)
-    const backWallGeo = new THREE.BoxGeometry(4.6, 2.8, 0.08);
+    const backWallGeo = new THREE.BoxGeometry(4.8, 2.8, 0.08);
     const backWallMat = new THREE.MeshStandardMaterial({
       color: 0xedeff2,
       roughness: 0.88,
       metalness: 0.01,
     });
     const backWall = new THREE.Mesh(backWallGeo, backWallMat);
-    backWall.position.set(2.15, 1.4, -0.04);
+    backWall.position.set(2.2, 1.4, -0.04);
     backWall.receiveShadow = true;
     roomGroup.add(backWall);
 
-    // Left wall (#CFD3D8)
-    const leftWallGeo = new THREE.BoxGeometry(0.08, 2.8, 3.8);
+    const leftWallGeo = new THREE.BoxGeometry(0.08, 2.8, 4.0);
     const leftWallMat = new THREE.MeshStandardMaterial({
       color: 0xd0d4d9,
       roughness: 0.88,
       metalness: 0.01,
     });
     const leftWall = new THREE.Mesh(leftWallGeo, leftWallMat);
-    leftWall.position.set(-0.12, 1.4, 1.82);
+    leftWall.position.set(-0.12, 1.4, 1.92);
     leftWall.receiveShadow = true;
     roomGroup.add(leftWall);
 
-    // Subtle floor baseboard (Plintus)
     const baseboardMat = new THREE.MeshStandardMaterial({
       color: 0xb89264,
       roughness: 0.55,
       metalness: 0.05,
     });
-    const backBaseboard = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.04, 0.015), baseboardMat);
-    backBaseboard.position.set(2.15, 0.02, 0.008);
+    const backBaseboard = new THREE.Mesh(new THREE.BoxGeometry(4.7, 0.04, 0.015), baseboardMat);
+    backBaseboard.position.set(2.2, 0.02, 0.008);
     roomGroup.add(backBaseboard);
 
-    const leftBaseboard = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.04, 3.7), baseboardMat);
-    leftBaseboard.position.set(-0.072, 0.02, 1.85);
+    const leftBaseboard = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.04, 3.9), baseboardMat);
+    leftBaseboard.position.set(-0.072, 0.02, 1.95);
     roomGroup.add(leftBaseboard);
 
-    // On-demand render scheduler with Software-WebGL fenceSync guard
+    // Shared hardware materials (reused across all boards/fixtures)
+    const sharedMaterials = {
+      chromeMat: new THREE.MeshStandardMaterial({
+        color: 0xd4d8de,
+        roughness: 0.22,
+        metalness: 0.85,
+      }),
+      legBlackMat: new THREE.MeshStandardMaterial({
+        color: 0x181b22,
+        roughness: 0.45,
+        metalness: 0.25,
+      }),
+      darkGlassMat: new THREE.MeshStandardMaterial({
+        color: 0x16181d,
+        roughness: 0.14,
+        metalness: 0.2,
+      }),
+      sinkSteelMat: new THREE.MeshStandardMaterial({
+        color: 0xadb4be,
+        roughness: 0.28,
+        metalness: 0.78,
+      }),
+      sinkBasinMat: new THREE.MeshStandardMaterial({
+        color: 0x6f7782,
+        roughness: 0.35,
+        metalness: 0.72,
+      }),
+      vitrineGlassMat: new THREE.MeshStandardMaterial({
+        color: 0x93c5fd,
+        roughness: 0.1,
+        metalness: 0.15,
+        transparent: true,
+        opacity: 0.35,
+      }),
+      dimLineMat: new THREE.LineBasicMaterial({ color: 0xf59e0b }),
+      highlightLineMat: new THREE.LineBasicMaterial({
+        color: 0x1d6ff2,
+        transparent: true,
+        opacity: 1.0,
+      }),
+      defaultLineMat: new THREE.LineBasicMaterial({
+        color: 0x646b75,
+        transparent: true,
+        opacity: 0.48,
+      }),
+    };
+
     let frameId = 0;
     let renderBusy = false;
     let renderDirty = false;
@@ -332,19 +382,29 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
 
     const setCameraView = (preset: CameraViewPreset, centerXMm: number) => {
       const cx = (centerXMm || 1400) / 1000;
-      const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
-      const targetOffsetX = isDesktop ? 0.32 : 0.0;
+      const w = container.clientWidth || window.innerWidth;
+      const h = container.clientHeight || window.innerHeight;
+      const isMobilePortrait = w < 768 && w < h;
+      const isDesktop = w >= 1024;
+      const distMult = isMobilePortrait ? 1.45 : 1.0;
+      const targetOffsetX = isDesktop ? 0.1 : 0.0;
+      const targetY = isMobilePortrait ? 0.85 : 0.98;
+
       if (preset === 'isometric') {
-        camera.position.set(cx + 1.85, 2.38, 3.85);
-        controls.target.set(cx + targetOffsetX, 0.98, 0.25);
+        camera.position.set(
+          cx + 1.85 * distMult,
+          2.38 * (isMobilePortrait ? 1.15 : 1.0),
+          3.85 * distMult,
+        );
+        controls.target.set(cx + targetOffsetX, targetY, 0.25);
       } else if (preset === 'front') {
-        camera.position.set(cx + targetOffsetX, 1.15, 3.9);
-        controls.target.set(cx + targetOffsetX, 1.05, 0.25);
+        camera.position.set(cx + targetOffsetX, 1.15, 3.9 * distMult);
+        controls.target.set(cx + targetOffsetX, 1.0, 0.25);
       } else if (preset === 'side') {
-        camera.position.set(cx + 3.4, 1.15, 0.85);
+        camera.position.set(cx + 3.4 * distMult, 1.15, 0.85);
         controls.target.set(cx, 1.0, 0.28);
       } else if (preset === 'top') {
-        camera.position.set(cx + targetOffsetX, 4.4, 1.2);
+        camera.position.set(cx + targetOffsetX, 4.4 * distMult, 1.2);
         controls.target.set(cx + targetOffsetX, 0.5, 0.35);
       }
       controls.update();
@@ -362,7 +422,7 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
 
     const handlePointerUp = (e: PointerEvent) => {
       const dist = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y);
-      if (dist > 6) return; // Was a camera drag, not a click
+      if (dist > 7) return;
 
       const rect = renderer.domElement.getBoundingClientRect();
       mouseNdc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -405,6 +465,7 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
       furnitureGroup,
       roomGroup,
       interactableMeshes,
+      sharedMaterials,
       requestRender,
       setCameraView,
       woodBumpTex,
@@ -421,11 +482,12 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
       controls.dispose();
       parquetTex.dispose();
       woodBumpTex.dispose();
+      Object.values(sharedMaterials).forEach((m) => m.dispose());
       renderer.dispose();
     };
   }, []);
 
-  // Handle camera preset switches
+  // Handle camera preset switches & project switches
   useEffect(() => {
     if (!sceneRef.current) return;
     const totalW =
@@ -433,21 +495,24 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     sceneRef.current.setCameraView(cameraPreset, totalW / 2);
   }, [cameraPreset, cameraTriggerCount, project.id]);
 
-  // Rebuild 3D furniture geometry when project, selection, explodeFactor, or doorsOpen changes
+  // Rebuild 3D furniture geometry using memoized `boards`
   useEffect(() => {
     const ctx = sceneRef.current;
     if (!ctx) return;
 
-    const { furnitureGroup, interactableMeshes, requestRender, woodBumpTex } = ctx;
+    const { furnitureGroup, interactableMeshes, sharedMaterials, requestRender, woodBumpTex } = ctx;
+    const sharedMatSet = new Set<THREE.Material>(Object.values(sharedMaterials));
 
-    // Dispose old meshes and materials inside furnitureGroup
+    // Dispose only non-shared geometries and cached board materials
     furnitureGroup.traverse((obj) => {
       if ((obj as THREE.Mesh).isMesh || (obj as THREE.LineSegments).isLineSegments) {
         const m = obj as THREE.Mesh;
         if (m.geometry) m.geometry.dispose();
         if (Array.isArray(m.material)) {
-          m.material.forEach((mat) => mat.dispose());
-        } else if (m.material) {
+          m.material.forEach((mat) => {
+            if (!sharedMatSet.has(mat)) mat.dispose();
+          });
+        } else if (m.material && !sharedMatSet.has(m.material)) {
           m.material.dispose();
         }
       }
@@ -455,62 +520,52 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     furnitureGroup.clear();
     interactableMeshes.length = 0;
 
-    const boards: Generated3DBoard[] = decomposeProjectTo3DBoards(project);
     const scale = 0.001; // mm to meters
+    const matCache = new Map<string, THREE.MeshStandardMaterial>();
 
-    const chromeMat = new THREE.MeshStandardMaterial({
-      color: 0xd4d8de,
-      roughness: 0.22,
-      metalness: 0.85,
-    });
-
-    const legBlackMat = new THREE.MeshStandardMaterial({
-      color: 0x181b22,
-      roughness: 0.45,
-      metalness: 0.25,
-    });
-
-    const darkGlassMat = new THREE.MeshStandardMaterial({
-      color: 0x16181d,
-      roughness: 0.14,
-      metalness: 0.2,
-    });
-
-    const sinkSteelMat = new THREE.MeshStandardMaterial({
-      color: 0xadb4be,
-      roughness: 0.28,
-      metalness: 0.78,
-    });
-
-    const sinkBasinMat = new THREE.MeshStandardMaterial({
-      color: 0x6f7782,
-      roughness: 0.35,
-      metalness: 0.72,
-    });
-
-    // 1. Render all individual boards (panels, shelves, doors, drawer boxes, countertops)
-    for (const b of boards) {
-      const isBoardSelected = selectedBoardId === b.id;
-      const isModSelected = !selectedBoardId && selectedModuleId === b.moduleId;
-      const isHighlighted = isBoardSelected || isModSelected;
+    const getBoardMaterial = (
+      hexColor: string,
+      isFacade: boolean,
+      isBoardSelected: boolean,
+      isVitrine: boolean,
+    ): THREE.MeshStandardMaterial => {
+      const key = `${hexColor.toLowerCase()}|${isFacade ? 1 : 0}|${isBoardSelected ? 1 : 0}|${isVitrine ? 1 : 0}|${wireframeMode ? 1 : 0}`;
+      const cached = matCache.get(key);
+      if (cached) return cached;
 
       const preset = FINISH_PRESETS.find(
-        (p) => p.hex.toLowerCase() === b.color.toLowerCase(),
+        (p) => p.hex.toLowerCase() === hexColor.toLowerCase(),
       );
 
-      const boardMat = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(b.color || '#EAE6DF'),
-        roughness: preset?.roughness ?? (b.role === 'fasad_eshik' || b.role === 'tortma_fasad' ? 0.46 : 0.58),
+      const mat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(hexColor || '#EAE6DF'),
+        roughness: preset?.roughness ?? (isFacade ? 0.46 : 0.58),
         metalness: preset?.metalness ?? 0.04,
         wireframe: wireframeMode,
         bumpMap: preset?.woodGrain ? woodBumpTex : null,
         bumpScale: preset?.woodGrain ? 0.002 : 0,
+        transparent: isVitrine,
+        opacity: isVitrine ? 0.65 : 1.0,
       });
 
       if (isBoardSelected) {
-        boardMat.emissive = new THREE.Color(0x1d4ed8);
-        boardMat.emissiveIntensity = 0.12;
+        mat.emissive = new THREE.Color(0x1d4ed8);
+        mat.emissiveIntensity = 0.16;
       }
+
+      matCache.set(key, mat);
+      return mat;
+    };
+
+    // 1. Render all individual boards
+    for (const b of boards) {
+      const isBoardSelected = selectedBoardId === b.id;
+      const isModSelected = !selectedBoardId && selectedModuleId === b.moduleId;
+      const isHighlighted = isBoardSelected || isModSelected;
+      const isFacade = b.role === 'fasad_eshik' || b.role === 'tortma_fasad';
+      const isVitrine = b.facadeStyle === 'vitrine' && b.role === 'fasad_eshik';
+
+      const boardMat = getBoardMaterial(b.color, isFacade, isBoardSelected, isVitrine);
 
       const sx = b.sizeX * scale;
       const sy = b.sizeY * scale;
@@ -519,20 +574,24 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
       const geo = new THREE.BoxGeometry(sx, sy, sz);
       const mesh = new THREE.Mesh(geo, boardMat);
 
-      // Apply exploded view offset
       const expDist = explodeFactor * 0.24;
-      let cx = b.centerX * scale + b.explodeVec[0] * expDist;
-      let cy = b.centerY * scale + b.explodeVec[1] * expDist;
+      const cx = b.centerX * scale + b.explodeVec[0] * expDist;
+      const cy = b.centerY * scale + b.explodeVec[1] * expDist;
       let cz = b.centerZ * scale + b.explodeVec[2] * expDist;
 
-      // Apply open doors / drawers transformation
+      const rotY = ((b.rotationY ?? 0) * Math.PI) / 180;
       if (doorsOpen && b.isDrawer) {
-        cz += 0.26;
+        const pushDist = 0.26;
+        mesh.position.set(
+          cx + Math.sin(rotY) * pushDist,
+          cy,
+          cz + Math.cos(rotY) * pushDist,
+        );
+      } else {
+        mesh.position.set(cx, cy, cz);
       }
 
-      mesh.position.set(cx, cy, cz);
-
-      if (doorsOpen && b.isDoor) {
+      if (doorsOpen && b.isDoor && (b.rotationY ?? 0) === 0) {
         const angle = b.doorHingeSide === 'right' ? Math.PI * 0.38 : -Math.PI * 0.38;
         if (b.doorHingeSide === 'top') {
           mesh.rotation.x = -Math.PI * 0.32;
@@ -553,50 +612,110 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
         moduleId: b.moduleId,
       };
 
-      // Crisp architectural & CAD edge outlines (electric blue #1D6FF2 when selected, matching reference screenshot)
       const edgesGeo = new THREE.EdgesGeometry(geo);
-      const lineMat = new THREE.LineBasicMaterial({
-        color: isHighlighted ? 0x1d6ff2 : 0x646b75,
-        transparent: true,
-        opacity: isHighlighted ? 1.0 : 0.48,
-      });
-      const lineSegs = new THREE.LineSegments(edgesGeo, lineMat);
+      const lineSegs = new THREE.LineSegments(
+        edgesGeo,
+        isHighlighted ? sharedMaterials.highlightLineMat : sharedMaterials.defaultLineMat,
+      );
       mesh.add(lineSegs);
 
-      // Add multi-part metallic handles to doors and drawer fronts
-      if (b.role === 'fasad_eshik' || b.role === 'tortma_fasad') {
+      // Vitrine glass insert
+      if (isVitrine && sx > 0.1 && sy > 0.1) {
+        const glassW = Math.max(0.05, (b.rotationY === 90 || b.rotationY === 270 ? sz : sx) - 0.08);
+        const glassH = Math.max(0.05, sy - 0.08);
+        const glassGeo = new THREE.BoxGeometry(
+          b.rotationY === 90 || b.rotationY === 270 ? sz + 0.002 : glassW,
+          glassH,
+          b.rotationY === 90 || b.rotationY === 270 ? glassW : sz + 0.002,
+        );
+        const glassMesh = new THREE.Mesh(glassGeo, sharedMaterials.vitrineGlassMat);
+        mesh.add(glassMesh);
+      }
+
+      // Metallic / Profile / Knob Handles for Doors & Drawers
+      const hStyle = b.handleStyle ?? 'bar';
+      if (isFacade && hStyle !== 'none') {
         const handleGroup = new THREE.Group();
-        const parentMod = project.modules.find((m) => m.id === b.moduleId);
         const isHorizHandle =
-          b.role === 'tortma_fasad' || parentMod?.handleOrientation === 'horizontal';
+          b.role === 'tortma_fasad' || b.handleOrientation === 'horizontal';
+        const faceWidth = b.rotationY === 90 || b.rotationY === 270 ? sz : sx;
+        const faceThick = b.rotationY === 90 || b.rotationY === 270 ? sx : sz;
 
-        const handleLen = 0.135;
-        const barGeo = new THREE.CylinderGeometry(0.0055, 0.0055, handleLen, 10);
-        const postGeo = new THREE.CylinderGeometry(0.0045, 0.0045, 0.022, 8);
-        postGeo.rotateX(Math.PI / 2);
-
-        const barMesh = new THREE.Mesh(barGeo, chromeMat.clone());
-        const post1 = new THREE.Mesh(postGeo, chromeMat.clone());
-        const post2 = new THREE.Mesh(postGeo, chromeMat.clone());
-
-        if (isHorizHandle) {
-          barMesh.rotation.z = Math.PI / 2;
-          post1.position.set(-handleLen * 0.38, 0, -0.01);
-          post2.position.set(handleLen * 0.38, 0, -0.01);
-          const hy = b.role === 'fasad_eshik' ? sy / 2 - 0.045 : sy * 0.15;
-          handleGroup.position.set(0, hy, sz / 2 + 0.018);
+        if (hStyle === 'knob') {
+          const knobGeo = new THREE.CylinderGeometry(0.011, 0.008, 0.02, 12);
+          knobGeo.rotateX(Math.PI / 2);
+          const knobMesh = new THREE.Mesh(knobGeo, sharedMaterials.chromeMat);
+          if (b.role === 'tortma_fasad') {
+            handleGroup.position.set(0, 0, faceThick / 2 + 0.01);
+          } else {
+            const isUpper = b.centerY > 1000;
+            const hx = b.doorHingeSide === 'right' ? -faceWidth / 2 + 0.038 : faceWidth / 2 - 0.038;
+            const hy = isUpper ? -sy / 2 + 0.045 : sy / 2 - 0.045;
+            handleGroup.position.set(hx, hy, faceThick / 2 + 0.01);
+          }
+          handleGroup.add(knobMesh);
+        } else if (hStyle === 'profile') {
+          const profLen = Math.min(faceWidth - 0.02, 0.24);
+          const profGeo = new THREE.BoxGeometry(
+            isHorizHandle ? profLen : 0.014,
+            isHorizHandle ? 0.012 : profLen,
+            0.016,
+          );
+          const profMesh = new THREE.Mesh(profGeo, sharedMaterials.legBlackMat);
+          if (isHorizHandle) {
+            handleGroup.position.set(0, sy / 2 - 0.008, faceThick / 2 + 0.008);
+          } else {
+            const hx = b.doorHingeSide === 'right' ? -faceWidth / 2 + 0.012 : faceWidth / 2 - 0.012;
+            handleGroup.position.set(hx, 0, faceThick / 2 + 0.008);
+          }
+          handleGroup.add(profMesh);
         } else {
-          post1.position.set(0, handleLen * 0.38, -0.01);
-          post2.position.set(0, -handleLen * 0.38, -0.01);
-          // Place vertical handle near opening edge and top/bottom depending on upper vs lower cabinet
-          const isUpperCab = (parentMod?.y ?? 0) > 800;
-          const hx =
-            b.doorHingeSide === 'right' ? -sx / 2 + 0.038 : sx / 2 - 0.038;
-          const hy = isUpperCab ? -sy / 2 + 0.095 : sy / 2 - 0.095;
-          handleGroup.position.set(hx, hy, sz / 2 + 0.018);
+          // Classic 'bar' handle
+          const handleLen = Math.min(0.135, Math.max(0.07, (isHorizHandle ? faceWidth : sy) * 0.45));
+          const barGeo = new THREE.CylinderGeometry(0.0055, 0.0055, handleLen, 10);
+          const postGeo = new THREE.CylinderGeometry(0.0045, 0.0045, 0.022, 8);
+          postGeo.rotateX(Math.PI / 2);
+
+          const barMesh = new THREE.Mesh(barGeo, sharedMaterials.chromeMat);
+          const post1 = new THREE.Mesh(postGeo, sharedMaterials.chromeMat);
+          const post2 = new THREE.Mesh(postGeo, sharedMaterials.chromeMat);
+
+          if (isHorizHandle) {
+            barMesh.rotation.z = Math.PI / 2;
+            post1.position.set(-handleLen * 0.38, 0, -0.01);
+            post2.position.set(handleLen * 0.38, 0, -0.01);
+            const hy = b.role === 'fasad_eshik' ? sy / 2 - 0.045 : sy * 0.15;
+            handleGroup.position.set(0, hy, faceThick / 2 + 0.018);
+          } else {
+            post1.position.set(0, handleLen * 0.38, -0.01);
+            post2.position.set(0, -handleLen * 0.38, -0.01);
+            const isUpperCab = b.centerY > 1000;
+            const hx = b.doorHingeSide === 'right' ? -faceWidth / 2 + 0.038 : faceWidth / 2 - 0.038;
+            const hy = isUpperCab ? -sy / 2 + 0.095 : sy / 2 - 0.095;
+            handleGroup.position.set(hx, hy, faceThick / 2 + 0.018);
+          }
+          handleGroup.add(barMesh, post1, post2);
         }
 
-        handleGroup.add(barMesh, post1, post2);
+        // Rotate handle group to match module rotationY
+        if (b.rotationY === 90) {
+          handleGroup.rotation.y = Math.PI / 2;
+          const origZ = handleGroup.position.z;
+          const origX = handleGroup.position.x;
+          handleGroup.position.x = origZ;
+          handleGroup.position.z = -origX;
+        } else if (b.rotationY === 180) {
+          handleGroup.rotation.y = Math.PI;
+          handleGroup.position.x = -handleGroup.position.x;
+          handleGroup.position.z = -handleGroup.position.z;
+        } else if (b.rotationY === 270) {
+          handleGroup.rotation.y = -Math.PI / 2;
+          const origZ = handleGroup.position.z;
+          const origX = handleGroup.position.x;
+          handleGroup.position.x = -origZ;
+          handleGroup.position.z = origX;
+        }
+
         mesh.add(handleGroup);
       }
 
@@ -604,7 +723,7 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
       interactableMeshes.push(mesh);
     }
 
-    // 2. Render composite multi-part module fixtures (Adjustable Legs, Stainless Sink + Faucet, 4-Burner Hob)
+    // 2. Render composite multi-part module fixtures (Legs, Sink, Cooktop, Oven, Clothes Rod)
     for (const mod of project.modules) {
       const mx = mod.x * scale;
       const my = mod.y * scale;
@@ -614,88 +733,87 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
       const md = mod.depth * scale;
       const legH = mod.legHeight * scale;
       const ctH = (mod.hasCountertop ? mod.countertopThickness : 0) * scale;
+      const rot = mod.rotationY ?? 0;
 
-      // A. 4 Composite Black Adjustable Legs (Oyoqchalar)
+      // Local group anchored at module's rotated bounding box center
+      const fixGroup = new THREE.Group();
+      const footW = rot === 90 || rot === 270 ? md : mw;
+      const footD = rot === 90 || rot === 270 ? mw : md;
+      fixGroup.position.set(mx + footW / 2, my, mz + footD / 2);
+      fixGroup.rotation.y = (rot * Math.PI) / 180;
+
+      // A. Adjustable Legs
       if (mod.legHeight > 0) {
         const legPositions = [
-          [mx + 0.045, mz + 0.055],
-          [mx + mw - 0.045, mz + 0.055],
-          [mx + 0.045, mz + md - 0.045],
-          [mx + mw - 0.045, mz + md - 0.045],
+          [-mw / 2 + 0.045, -md / 2 + 0.055],
+          [mw / 2 - 0.045, -md / 2 + 0.055],
+          [-mw / 2 + 0.045, md / 2 - 0.045],
+          [mw / 2 - 0.045, md / 2 - 0.045],
         ];
+        const shaftGeo = new THREE.CylinderGeometry(0.016, 0.016, legH, 10);
+        const footGeo = new THREE.CylinderGeometry(0.024, 0.026, 0.012, 10);
         for (const [lx, lz] of legPositions) {
-          const legGroup = new THREE.Group();
-          const shaft = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.016, 0.016, legH, 12),
-            legBlackMat.clone(),
-          );
+          const legSub = new THREE.Group();
+          const shaft = new THREE.Mesh(shaftGeo.clone(), sharedMaterials.legBlackMat);
           shaft.position.y = legH / 2;
-          const footPad = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.024, 0.026, 0.012, 12),
-            legBlackMat.clone(),
-          );
+          const footPad = new THREE.Mesh(footGeo.clone(), sharedMaterials.legBlackMat);
           footPad.position.y = 0.006;
-          legGroup.add(shaft, footPad);
-          legGroup.position.set(lx, my, lz);
-          furnitureGroup.add(legGroup);
+          legSub.add(shaft, footPad);
+          legSub.position.set(lx, 0, lz);
+          fixGroup.add(legSub);
         }
+        shaftGeo.dispose();
+        footGeo.dispose();
       }
 
-      const topSurfaceY = my + legH + mh + ctH + explodeFactor * 0.31;
+      const topSurfaceLocalY = legH + mh + ctH + explodeFactor * 0.31;
 
-      // B. Stainless Steel Sink + Swan-Neck Faucet (`pastki_moyka`)
+      // B. Stainless Steel Sink (`pastki_moyka`)
       if (mod.kind === 'pastki_moyka') {
         const sinkGroup = new THREE.Group();
         const sinkW = Math.min(mw * 0.72, 0.56);
         const sinkD = Math.min(md * 0.72, 0.42);
 
-        // Outer stainless steel rim frame
         const rimMesh = new THREE.Mesh(
           new THREE.BoxGeometry(sinkW, 0.012, sinkD),
-          sinkSteelMat.clone(),
+          sharedMaterials.sinkSteelMat,
         );
         rimMesh.position.set(0, 0.006, 0.02);
 
-        // Inner recessed dark basin well
         const basinMesh = new THREE.Mesh(
           new THREE.BoxGeometry(sinkW - 0.055, 0.014, sinkD - 0.065),
-          sinkBasinMat.clone(),
+          sharedMaterials.sinkBasinMat,
         );
         basinMesh.position.set(0, 0.008, 0.025);
 
-        // Drain strainer disc
         const drainMesh = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.026, 0.026, 0.016, 16),
-          chromeMat.clone(),
+          new THREE.CylinderGeometry(0.026, 0.026, 0.016, 14),
+          sharedMaterials.chromeMat,
         );
         drainMesh.position.set(0, 0.009, 0.01);
 
-        // Faucet base pillar
         const faucetBase = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.018, 0.022, 0.09, 14),
-          chromeMat.clone(),
+          new THREE.CylinderGeometry(0.018, 0.022, 0.09, 12),
+          sharedMaterials.chromeMat,
         );
         faucetBase.position.set(0.08, 0.045, -sinkD / 2 + 0.015);
 
-        // Faucet tall vertical stem
         const faucetStem = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.01, 0.01, 0.22, 12),
-          chromeMat.clone(),
+          new THREE.CylinderGeometry(0.01, 0.01, 0.22, 10),
+          sharedMaterials.chromeMat,
         );
         faucetStem.position.set(0.08, 0.16, -sinkD / 2 + 0.015);
 
-        // Faucet angled spout arm
         const faucetSpout = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.009, 0.009, 0.18, 12),
-          chromeMat.clone(),
+          new THREE.CylinderGeometry(0.009, 0.009, 0.18, 10),
+          sharedMaterials.chromeMat,
         );
         faucetSpout.rotation.x = Math.PI / 2.5;
         faucetSpout.position.set(0.02, 0.25, -sinkD / 2 + 0.08);
 
-        // Faucet mixer handle lever
         const mixerLever = new THREE.Mesh(
           new THREE.CylinderGeometry(0.004, 0.004, 0.065, 8),
-          chromeMat.clone(),
+          sharedMaterials.chromeMat,
         );
         mixerLever.rotation.z = Math.PI / 2;
         mixerLever.position.set(0.115, 0.065, -sinkD / 2 + 0.015);
@@ -709,25 +827,23 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
           faucetSpout,
           mixerLever,
         );
-        sinkGroup.position.set(mx + mw / 2, topSurfaceY, mz + md / 2);
-        furnitureGroup.add(sinkGroup);
+        sinkGroup.position.set(0, topSurfaceLocalY, 0);
+        fixGroup.add(sinkGroup);
       }
 
-      // C. 4-Burner Black Glass Cooktop Hob (`pastki_plita`)
+      // C. 4-Burner Cooktop (`pastki_plita`)
       if (mod.kind === 'pastki_plita') {
         const hobGroup = new THREE.Group();
         const hobW = Math.min(mw * 0.76, 0.58);
         const hobD = Math.min(md * 0.78, 0.48);
 
-        // Tempered black glass base
         const glassPlate = new THREE.Mesh(
           new THREE.BoxGeometry(hobW, 0.014, hobD),
-          darkGlassMat.clone(),
+          sharedMaterials.darkGlassMat,
         );
         glassPlate.position.set(0, 0.007, 0.02);
         hobGroup.add(glassPlate);
 
-        // 4 burners (2 front, 2 back)
         const burnerCoords: [number, number, number][] = [
           [-hobW * 0.26, -hobD * 0.2, 0.044],
           [hobW * 0.24, -hobD * 0.2, 0.036],
@@ -737,22 +853,22 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
 
         for (const [bx, bz, radius] of burnerCoords) {
           const ring = new THREE.Mesh(
-            new THREE.CylinderGeometry(radius, radius * 1.06, 0.012, 20),
-            chromeMat.clone(),
+            new THREE.CylinderGeometry(radius, radius * 1.06, 0.012, 16),
+            sharedMaterials.chromeMat,
           );
           ring.position.set(bx, 0.016, bz + 0.02);
 
           const cap = new THREE.Mesh(
-            new THREE.CylinderGeometry(radius * 0.62, radius * 0.62, 0.016, 16),
-            legBlackMat.clone(),
+            new THREE.CylinderGeometry(radius * 0.62, radius * 0.62, 0.016, 14),
+            sharedMaterials.legBlackMat,
           );
           cap.position.set(bx, 0.018, bz + 0.02);
 
           hobGroup.add(ring, cap);
         }
 
-        hobGroup.position.set(mx + mw / 2, topSurfaceY, mz + md / 2);
-        furnitureGroup.add(hobGroup);
+        hobGroup.position.set(0, topSurfaceLocalY, 0);
+        fixGroup.add(hobGroup);
       }
 
       // D. Built-in Oven Front (`pastki_duxovka`)
@@ -762,38 +878,33 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
         const ovenH = Math.min(0.585, mh * 0.78);
         const bottomDrawerH = Math.max(0.1, mh - 0.6);
 
-        // Dark glass oven front body
         const ovenGlass = new THREE.Mesh(
           new THREE.BoxGeometry(ovenW, ovenH, 0.022),
-          darkGlassMat.clone(),
+          sharedMaterials.darkGlassMat,
         );
-        // Top brushed steel control strip
         const ctrlStrip = new THREE.Mesh(
           new THREE.BoxGeometry(ovenW - 0.008, 0.085, 0.025),
-          sinkSteelMat.clone(),
+          sharedMaterials.sinkSteelMat,
         );
         ctrlStrip.position.set(0, ovenH / 2 - 0.048, 0.002);
 
-        // Oven viewing window frame
         const windowMesh = new THREE.Mesh(
           new THREE.BoxGeometry(ovenW * 0.74, ovenH * 0.56, 0.026),
-          legBlackMat.clone(),
+          sharedMaterials.legBlackMat,
         );
         windowMesh.position.set(0, -0.04, 0.001);
 
-        // Stainless horizontal oven bar handle
         const ovenBar = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.007, 0.007, ovenW * 0.78, 12),
-          chromeMat.clone(),
+          new THREE.CylinderGeometry(0.007, 0.007, ovenW * 0.78, 10),
+          sharedMaterials.chromeMat,
         );
         ovenBar.rotation.z = Math.PI / 2;
         ovenBar.position.set(0, ovenH / 2 - 0.125, 0.028);
 
-        // Two rotary dials
         for (const dx of [-ovenW * 0.28, ovenW * 0.28]) {
           const dial = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.015, 0.015, 0.018, 14),
-            chromeMat.clone(),
+            new THREE.CylinderGeometry(0.015, 0.015, 0.018, 12),
+            sharedMaterials.chromeMat,
           );
           dial.rotation.x = Math.PI / 2;
           dial.position.set(dx, ovenH / 2 - 0.048, 0.018);
@@ -802,46 +913,47 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
 
         ovenGroup.add(ovenGlass, ctrlStrip, windowMesh, ovenBar);
         ovenGroup.position.set(
-          mx + mw / 2,
-          my + legH + bottomDrawerH + ovenH / 2 + 0.01,
-          mz + md + 0.012 + explodeFactor * 0.22,
+          0,
+          legH + bottomDrawerH + ovenH / 2 + 0.01,
+          md / 2 + 0.012 + explodeFactor * 0.22,
         );
-        furnitureGroup.add(ovenGroup);
+        fixGroup.add(ovenGroup);
       }
 
       // E. Chrome Clothes Hanging Rod (`hasClothesRod`)
       if (mod.hasClothesRod) {
         const rodLen = Math.max(0.1, mw - 0.036);
-        const rodGeo = new THREE.CylinderGeometry(0.012, 0.012, rodLen, 14);
+        const rodGeo = new THREE.CylinderGeometry(0.012, 0.012, rodLen, 12);
         rodGeo.rotateZ(Math.PI / 2);
-        const rodMesh = new THREE.Mesh(rodGeo, chromeMat.clone());
-        rodMesh.position.set(
-          mx + mw / 2,
-          my + legH + mh - 0.26,
-          mz + md * 0.52,
-        );
-        furnitureGroup.add(rodMesh);
+        const rodMesh = new THREE.Mesh(rodGeo, sharedMaterials.chromeMat);
+        rodMesh.position.set(0, legH + mh - 0.26, 0.02);
+        fixGroup.add(rodMesh);
       }
+
+      furnitureGroup.add(fixGroup);
     }
 
     // 3. Optional Overall Dimension Ruler Callouts in 3D
     if (showDimensions && project.modules.length > 0) {
       const minX = Math.min(...project.modules.map((m) => m.x)) * scale;
-      const maxX = Math.max(...project.modules.map((m) => m.x + m.width)) * scale;
+      const maxX =
+        Math.max(
+          ...project.modules.map((m) =>
+            m.x + (m.rotationY === 90 || m.rotationY === 270 ? m.depth : m.width),
+          ),
+        ) * scale;
       const lineGeo = new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(minX, 0.015, 0.72),
         new THREE.Vector3(maxX, 0.015, 0.72),
       ]);
-      const dimLine = new THREE.Line(
-        lineGeo,
-        new THREE.LineBasicMaterial({ color: 0xf59e0b }),
-      );
+      const dimLine = new THREE.Line(lineGeo, sharedMaterials.dimLineMat);
       furnitureGroup.add(dimLine);
     }
 
     requestRender();
   }, [
     project,
+    boards,
     selectedModuleId,
     selectedBoardId,
     explodeFactor,
@@ -854,6 +966,7 @@ export const Viewport3D: React.FC<Viewport3DProps> = ({
     <div
       ref={mountRef}
       data-testid="viewport-3d-canvas"
+      style={{ touchAction: 'none' }}
       className="w-full h-full relative select-none overflow-hidden"
       aria-label="3D Mebel Konstruktori Sahnasi"
     />

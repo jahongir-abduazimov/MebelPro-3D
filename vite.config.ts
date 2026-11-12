@@ -85,7 +85,26 @@ export default defineConfig(() => {
     ],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(import.meta.dirname, '.'),
+      },
+    },
+    build: {
+      chunkSizeWarningLimit: 750,
+      rolldownOptions: {
+        output: {
+          codeSplitting: {
+            groups: [
+              {
+                name: 'three-vendor',
+                test: /node_modules[\\/]three/,
+              },
+              {
+                name: 'react-vendor',
+                test: /node_modules[\\/](react|react-dom|lucide-react)/,
+              },
+            ],
+          },
+        },
       },
     },
     server: {

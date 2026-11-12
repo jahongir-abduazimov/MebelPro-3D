@@ -63,6 +63,12 @@ export type ModuleKind =
   | 'yozuv_stoli'      // Yozuv stoli / Parta
   | 'kitob_javoni';    // Ochiq stellaj / Kitob javoni
 
+export type TopPanelType = 'full' | 'tsarga' | 'none';
+export type BottomPanelType = 'full' | 'none';
+export type BackPanelType = 'overlay_xdf' | 'inset_xdf' | 'ldsp';
+export type FacadeStyle = 'overlay' | 'inset' | 'vitrine';
+export type HandleStyle = 'bar' | 'profile' | 'knob' | 'none';
+
 export interface FurnitureModule {
   id: string;
   name: string;
@@ -73,6 +79,7 @@ export interface FurnitureModule {
   x: number;               // Xonadagi joylashuvi X, mm (chap devordan)
   y: number;               // Poldan balandligi Y, mm (pastki shkaflar uchun 0)
   z: number;               // Orqa devordan Z, mm
+  rotationY?: 0 | 90 | 180 | 270; // 3D burchak burilishi (gradus)
   boardThickness: number;  // 16 yoki 18 mm
   bodyMaterial: MaterialId;
   facadeMaterial: MaterialId;
@@ -83,13 +90,21 @@ export interface FurnitureModule {
   countertopThickness: number; // 38 mm
   countertopOverhangFront: number; // 40 mm
   legHeight: number;       // Oyoqcha balandligi, mm (masalan 100mm, osma shkafda 0)
-  doorCount: 0 | 1 | 2;
+  doorCount: 0 | 1 | 2 | 3;
   doorHinge?: 'left' | 'right' | 'top'; // 1 eshikli modul uchun ochilish tomoni
   handleOrientation: 'vertical' | 'horizontal';
+  handleStyle?: HandleStyle;
+  facadeStyle?: FacadeStyle;
   drawerCount: number;     // 0..5
+  drawerPosition?: 'bottom' | 'top'; // Eshik + tortma birga bo'lganda tortma o'rni
+  drawerZoneHeight?: number; // Eshik + tortma birga bo'lganda tortma zonasi balandligi (mm)
   shelfCount: number;      // 0..8
-  hasBackPanel: boolean;   // XDF 4mm
-  centerDivider?: boolean; // O'rta vertikal to'siq (Peregorodka)
+  hasBackPanel: boolean;   // XDF 4mm yoki LDSP
+  backPanelType?: BackPanelType;
+  topPanelType?: TopPanelType;
+  bottomPanelType?: BottomPanelType;
+  centerDivider?: boolean; // O'rta vertikal to'siq (Peregorodka) - legacy compat
+  dividerCount?: 0 | 1 | 2; // 0, 1 yoki 2 ta vertikal bo'lim to'sig'i
   hasToeKick?: boolean;    // Old tsokol plankasi (oyoqchalar oldini yopuvchi)
   hasClothesRod?: boolean; // Kiyim ilgich xrom trubasi (Shkaf uchun)
 }
@@ -119,6 +134,8 @@ export interface PartOverride {
   edges?: EdgeConfig;
   cutLength?: number;
   cutWidth?: number;
+  color?: string;
+  hidden?: boolean;
 }
 
 export interface Generated3DBoard {
@@ -145,6 +162,11 @@ export interface Generated3DBoard {
   isDoor?: boolean;
   doorHingeSide?: 'left' | 'right' | 'top';
   isDrawer?: boolean;
+  facadeStyle?: FacadeStyle;
+  handleStyle?: HandleStyle;
+  handleOrientation?: 'vertical' | 'horizontal';
+  rotationY?: 0 | 90 | 180 | 270;
+  isOverridden?: boolean;
   explodeVec: [number, number, number];
 }
 
