@@ -1,0 +1,6 @@
+{
+  "name": "MebelPro 3D — Shaxsiy Mebel Konstruktori va Raskroy Tizimi",
+  "description": "Mebellarni 0 dan 3D modellashtirish, raskroy sexi uchun aniq kesish o'lchamlari, 2D listga joylashtirish va materiallar smetasini avtomatik hisoblovchi oflayn PWA dasturi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
