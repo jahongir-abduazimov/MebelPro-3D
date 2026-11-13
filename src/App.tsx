@@ -56,6 +56,7 @@ export default function App() {
   // 3D Viewport interactive state
   const [explodeFactor, setExplodeFactor] = useState<number>(0);
   const [doorsOpen, setDoorsOpen] = useState<boolean>(false);
+  const [doorOverrides, setDoorOverrides] = useState<Record<string, boolean>>({});
   const [cameraPreset, setCameraPreset] = useState<CameraViewPreset>('isometric');
   const [cameraTriggerCount, setCameraTriggerCount] = useState<number>(0);
 
@@ -179,9 +180,9 @@ export default function App() {
       boardThickness: 16,
       bodyMaterial: refMod?.bodyMaterial || 'ldsp_16',
       facadeMaterial: refMod?.facadeMaterial || 'lmdf_16',
-      bodyColor: refMod?.bodyColor || '#E5E1D8',
-      facadeColor: refMod?.facadeColor || '#EAE6DF',
-      countertopColor: refMod?.countertopColor || '#C6C2B9',
+      bodyColor: refMod?.bodyColor || '#D9D3C7',
+      facadeColor: refMod?.facadeColor || '#E2DDD2',
+      countertopColor: refMod?.countertopColor || '#BCB6A9',
       hasCountertop:
         !isUpper &&
         kind !== 'shkaf_kupe' &&
@@ -349,6 +350,17 @@ export default function App() {
     setActiveProjectId(newProj.id);
     setSelectedModuleId(newProj.modules[0]?.id || null);
     setSelectedBoardId(null);
+    setDoorOverrides({});
+  };
+
+  const handleToggleDoor = (toggleKey: string) => {
+    setDoorOverrides((prev) => {
+      const currentlyOpen = prev[toggleKey] ?? doorsOpen;
+      return {
+        ...prev,
+        [toggleKey]: !currentlyOpen,
+      };
+    });
   };
 
   const handleDeleteProject = (projId: string) => {
@@ -460,6 +472,8 @@ export default function App() {
               }}
               explodeFactor={explodeFactor}
               doorsOpen={doorsOpen}
+              doorOverrides={doorOverrides}
+              onToggleDoor={handleToggleDoor}
               wireframeMode={false}
               showDimensions={true}
               cameraPreset={cameraPreset}
@@ -490,7 +504,10 @@ export default function App() {
               explodeFactor={explodeFactor}
               onChangeExplodeFactor={setExplodeFactor}
               doorsOpen={doorsOpen}
-              onToggleDoorsOpen={() => setDoorsOpen((v) => !v)}
+              onToggleDoorsOpen={() => {
+                setDoorsOpen((v) => !v);
+                setDoorOverrides({});
+              }}
               cameraPreset={cameraPreset}
               onSelectCameraPreset={(preset) => {
                 setCameraPreset(preset);
@@ -541,6 +558,7 @@ export default function App() {
                 const target = projects.find((p) => p.id === id);
                 setSelectedModuleId(target?.modules[0]?.id || null);
                 setSelectedBoardId(null);
+                setDoorOverrides({});
                 setActiveTab('3d');
               }}
               onCreateProject={(newProj) => {

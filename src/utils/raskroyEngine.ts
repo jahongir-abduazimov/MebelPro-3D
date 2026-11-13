@@ -142,9 +142,9 @@ export const MATERIAL_SPECS: Record<MaterialId, MaterialSpec> = {
 };
 
 export const FINISH_PRESETS: FinishPreset[] = [
-  { id: 'krem_mat', name: 'Krem Matoviy (Slonovaya kost)', hex: '#EAE6DF', roughness: 0.55, metalness: 0.04 },
-  { id: 'oq_qor', name: 'Oq Qor (Belosnejniy)', hex: '#F4F5F7', roughness: 0.42, metalness: 0.05 },
-  { id: 'kvars_bej', name: 'Kvars Bej Tosh', hex: '#C8C3B8', roughness: 0.48, metalness: 0.08 },
+  { id: 'krem_mat', name: 'Krem Matoviy (Slonovaya kost)', hex: '#E2DDD2', roughness: 0.56, metalness: 0.03 },
+  { id: 'oq_qor', name: 'Oq Qor (Belosnejniy)', hex: '#F0F1F3', roughness: 0.44, metalness: 0.04 },
+  { id: 'kvars_bej', name: 'Kvars Bej Tosh', hex: '#BCB6A9', roughness: 0.42, metalness: 0.06 },
   { id: 'eman_sonoma', name: 'Eman Sonoma (Dub)', hex: '#C8A878', roughness: 0.65, metalness: 0.03, woodGrain: true },
   { id: 'yong_oq', name: "Klassik Yong'oq (Orex)", hex: '#7C5836', roughness: 0.62, metalness: 0.04, woodGrain: true },
   { id: 'antratsit', name: 'Antratsit Grafit', hex: '#373C45', roughness: 0.50, metalness: 0.10 },
@@ -1960,9 +1960,9 @@ export function calculateBOMSummary(
  * Creates the default Kitchen Garnitur project matching the user's attached reference image (`image_bea20856.png`).
  */
 export function createDefaultKitchenProject(): FurnitureProject {
-  const bodyHex = '#E5E1D8';
-  const facadeHex = '#EAE6DF';
-  const ctHex = '#C6C2B9';
+  const bodyHex = '#D9D3C7';
+  const facadeHex = '#E2DDD2';
+  const ctHex = '#BCB6A9';
 
   const modules: FurnitureModule[] = [
     // 1. Left Sink Cabinet (Moykali 2 eshikli shkaf, W=800mm)
@@ -2218,9 +2218,9 @@ export function createBlankProject(withStarterBox: boolean = false): FurniturePr
           boardThickness: 16,
           bodyMaterial: 'ldsp_16',
           facadeMaterial: 'lmdf_16',
-          bodyColor: '#E5E1D8',
-          facadeColor: '#EAE6DF',
-          countertopColor: '#C6C2B9',
+          bodyColor: '#D9D3C7',
+          facadeColor: '#E2DDD2',
+          countertopColor: '#BCB6A9',
           hasCountertop: true,
           countertopThickness: 38,
           countertopOverhangFront: 40,
@@ -2275,7 +2275,7 @@ export function createWardrobeProject(): FurnitureProject {
         bodyMaterial: 'ldsp_16',
         facadeMaterial: 'lmdf_16',
         bodyColor: '#C8A878',
-        facadeColor: '#EAE6DF',
+        facadeColor: '#E2DDD2',
         countertopColor: '#C8A878',
         hasCountertop: false,
         countertopThickness: 0,
@@ -2303,7 +2303,7 @@ export function createWardrobeProject(): FurnitureProject {
         bodyMaterial: 'ldsp_16',
         facadeMaterial: 'lmdf_16',
         bodyColor: '#C8A878',
-        facadeColor: '#EAE6DF',
+        facadeColor: '#E2DDD2',
         countertopColor: '#C8A878',
         hasCountertop: true,
         countertopThickness: 38,
